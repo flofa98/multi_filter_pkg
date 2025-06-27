@@ -183,9 +183,9 @@ private:
 
         if (waypoints_.empty()) return;
 
-        double robot_x = odom_.pose.pose.position.x;
-        double robot_y = odom_.pose.pose.position.y;
-        double robot_theta = getYawFromQuaternion(odom_.pose.pose.orientation);
+        double robot_x = ground_truth_pose_.pose.pose.position.x;
+        double robot_y = ground_truth_pose_.pose.pose.position.y;
+        double robot_theta = getYawFromQuaternion(ground_truth_pose_.pose.pose.orientation);
 
         Eigen::Vector2d target = waypoints_[current_waypoint_idx_];
         double dx = target.x() - robot_x;
