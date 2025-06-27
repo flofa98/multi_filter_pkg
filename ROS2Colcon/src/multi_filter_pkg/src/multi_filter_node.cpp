@@ -72,6 +72,10 @@ public:
     }
 
 private:
+    //Rauschen
+    std::normal_distribution<double> noise_pos_{0.0, 0.02};   // 2 cm
+    std::normal_distribution<double> noise_yaw_{0.0, 0.01};   // ca. 0.6°
+
     // KF
     void kfPredict(double v, double omega, double dt) {
         Eigen::Matrix3d F = Eigen::Matrix3d::Identity();
@@ -218,7 +222,9 @@ private:
             double v = odom_.twist.twist.linear.x;
             double omega = odom_.twist.twist.angular.z;
             Eigen::Vector3d z;
-            z << robot_x, robot_y, robot_theta;
+            z << robot_x + noise_pos_(gen_),
+            robot_y + noise_pos_(gen_),
+            robot_theta + noise_yaw_(gen_);
 
             kfPredict(v, omega, dt);
             kfUpdate(z);
