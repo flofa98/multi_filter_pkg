@@ -26,6 +26,12 @@ ament_target_dependencies(multi_filter_node
 install(TARGETS multi_filter_node
   RUNTIME DESTINATION lib/${PROJECT_NAME}
 )
+install(DIRECTORY
+  launch
+  maps
+  DESTINATION share/${PROJECT_NAME}
+)
+
 
 
 ament_package()
