@@ -6,9 +6,9 @@ from ament_index_python.packages import get_package_share_directory
 import os
 
 def generate_launch_description():
-    tb3_model = 'burger'  
+    tb3_model = 'burger'  # oder 'waffle', je nach deinem Setup
 
-    # Pfade
+    # Pfade definieren
     tb3_gazebo_launch = os.path.join(
         get_package_share_directory('turtlebot3_gazebo'),
         'launch',
@@ -28,19 +28,19 @@ def generate_launch_description():
     )
 
     return LaunchDescription([
-        # Gazebo starten mit TurtleBot3
+        # 1. Gazebo-Simulation mit TurtleBot3 starten
         IncludeLaunchDescription(
             PythonLaunchDescriptionSource(tb3_gazebo_launch),
             launch_arguments={'model': tb3_model}.items()
         ),
 
-        # Nav2 Localization mit Karte + AMCL
+        # 2. AMCL + Karte starten
         IncludeLaunchDescription(
             PythonLaunchDescriptionSource(nav2_localization),
             launch_arguments={'map': map_path}.items()
         ),
 
-        # Filter-Node
+        # 3. Dein Filter-Node
         Node(
             package='multi_filter_pkg',
             executable='multi_filter_node',
@@ -48,16 +48,11 @@ def generate_launch_description():
             output='screen'
         ),
 
-        # Initialpose setzen
+        # 4. Initialpose automatisch setzen (über eigenen Python-Node)
         Node(
-            package='geometry_msgs',
-            executable='ros2',
-            name='set_initial_pose',
-            arguments=[
-                'topic', 'pub', '--once', '/initialpose',
-                'geometry_msgs/PoseWithCovarianceStamped',
-                '{header: {frame_id: "map"}, pose: {pose: {position: {x: 0.0, y: 0.0, z: 0.0}, orientation: {z: 0.0, w: 1.0}}, covariance: [0.25, 0, 0, 0, 0, 0, 0, 0.25, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0]}}'
-            ],
+            package='multi_filter_pkg',
+            executable='initial_pose_publisher.py',
+            name='initial_pose_publisher',
             output='screen'
         )
     ])
