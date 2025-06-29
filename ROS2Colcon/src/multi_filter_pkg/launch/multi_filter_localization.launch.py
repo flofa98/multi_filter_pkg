@@ -46,7 +46,7 @@ def generate_launch_description():
             }.items(),
         ),
 
-        # Dein Filter-Node
+        # Filter-Node
         Node(
             package='multi_filter_pkg',
             executable='multi_filter_node',
