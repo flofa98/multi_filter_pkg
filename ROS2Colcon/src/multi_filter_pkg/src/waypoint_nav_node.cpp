@@ -44,11 +44,11 @@ private:
                      std::ofstream& file, int color);
     void saveMapImage();
 
-    void predictKF(double v, double dt);
+    void predictPF(double v, double omega, double dt);
+    void predictKF(double v, double omega, double dt);
+    void predictEKF(double v, double omega, double dt);
     void updateKF(double z);
-    void predictEKF(double v, double dt);
     void updateEKF(double z);
-    void predictPF(double v, double dt);
     void updatePF(double z);
 
     rclcpp_action::Client<NavigateToPose>::SharedPtr client_;
