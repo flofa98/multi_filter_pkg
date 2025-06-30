@@ -1,26 +1,29 @@
 #include <rclcpp/rclcpp.hpp>
 #include <rclcpp_action/rclcpp_action.hpp>
-#include <geometry_msgs/msg/pose_stamped.hpp>
 #include <nav2_msgs/action/navigate_to_pose.hpp>
-#include <tf2_geometry_msgs/tf2_geometry_msgs.hpp>
-#include <yaml-cpp/yaml.h>
+#include <geometry_msgs/msg/pose_stamped.hpp>
 #include <ament_index_cpp/get_package_share_directory.hpp>
+#include <yaml-cpp/yaml.h>
+#include <fstream>
+#include <vector>
+#include <string>
 
 using namespace std::chrono_literals;
 using NavigateToPose = nav2_msgs::action::NavigateToPose;
 
 class WaypointNavNode : public rclcpp::Node {
 public:
-    WaypointNavNode() : Node("waypoint_nav_node") {
-        this->client_ = rclcpp_action::create_client<NavigateToPose>(this, "navigate_to_pose");
+    WaypointNavNode() : Node("waypoint_nav_node"), current_goal_idx_(0) {
+        client_ = rclcpp_action::create_client<NavigateToPose>(
+            this, "navigate_to_pose");
 
+        // Lade Waypoints
         std::string pkg_path = ament_index_cpp::get_package_share_directory("multi_filter_pkg");
         std::string yaml_path = pkg_path + "/config/waypoints.yaml";
 
         if (!loadWaypointsFromYAML(yaml_path)) {
             RCLCPP_ERROR(this->get_logger(), "Fehler beim Laden der Waypoints.");
             rclcpp::shutdown();
-            return;
         }
 
         timer_ = this->create_wall_timer(1s, std::bind(&WaypointNavNode::sendNextGoal, this));
@@ -29,34 +32,23 @@ public:
 private:
     rclcpp_action::Client<NavigateToPose>::SharedPtr client_;
     std::vector<geometry_msgs::msg::PoseStamped> waypoints_;
-    size_t current_goal_idx_ = 0;
+    size_t current_goal_idx_;
     rclcpp::TimerBase::SharedPtr timer_;
 
-    bool loadWaypointsFromYAML(const std::string &filename) {
+    bool loadWaypointsFromYAML(const std::string& filepath) {
         try {
-            YAML::Node config = YAML::LoadFile(filename);
-            if (!config["waypoints"]) return false;
-
-            for (const auto &entry : config["waypoints"]) {
+            YAML::Node config = YAML::LoadFile(filepath);
+            for (const auto& wp : config["waypoints"]) {
                 geometry_msgs::msg::PoseStamped pose;
-                auto pose_arr = entry.second["pose"];
-                auto orient_arr = entry.second["orientation"];
-
                 pose.header.frame_id = "map";
-                pose.pose.position.x = pose_arr[0].as<double>();
-                pose.pose.position.y = pose_arr[1].as<double>();
-                pose.pose.position.z = pose_arr[2].as<double>();
-
-                pose.pose.orientation.x = orient_arr[0].as<double>();
-                pose.pose.orientation.y = orient_arr[1].as<double>();
-                pose.pose.orientation.z = orient_arr[2].as<double>();
-                pose.pose.orientation.w = orient_arr[3].as<double>();
-
+                pose.pose.position.x = wp["x"].as<double>();
+                pose.pose.position.y = wp["y"].as<double>();
+                pose.pose.orientation.w = 1.0;  // default
                 waypoints_.push_back(pose);
             }
             return true;
-        } catch (const YAML::Exception &e) {
-            RCLCPP_ERROR(this->get_logger(), "YAML Fehler: %s", e.what());
+        } catch (const std::exception& e) {
+            RCLCPP_ERROR(this->get_logger(), "YAML Ladefehler: %s", e.what());
             return false;
         }
     }
@@ -77,21 +69,22 @@ private:
         goal_msg.pose = waypoints_[current_goal_idx_];
         goal_msg.behavior_tree = "";
 
-        RCLCPP_INFO(this->get_logger(), "Sende Ziel %ld...", current_goal_idx_);
-        client_->async_send_goal(goal_msg,
-            [](auto) {},  // goal_response
-            [](auto) {},  // feedback
-            [this](auto result) {  // result
-                RCLCPP_INFO(this->get_logger(), "Ziel erreicht.");
-                current_goal_idx_++;
-            });
+        rclcpp_action::Client<NavigateToPose>::SendGoalOptions options;
+        options.goal_response_callback = [](auto) {};
+        options.feedback_callback = [](auto, auto) {};
+        options.result_callback = [this](auto result) {
+            RCLCPP_INFO(this->get_logger(), "Ziel %ld erreicht.", current_goal_idx_);
+            current_goal_idx_++;
+        };
+
+        client_->async_send_goal(goal_msg, options);
     }
 };
 
 int main(int argc, char **argv) {
     rclcpp::init(argc, argv);
-    rclcpp::spin(std::make_shared<WaypointNavNode>());
+    auto node = std::make_shared<WaypointNavNode>();
+    rclcpp::spin(node);
     rclcpp::shutdown();
     return 0;
 }
-
