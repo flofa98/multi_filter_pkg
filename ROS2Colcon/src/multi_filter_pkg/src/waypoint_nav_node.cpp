@@ -111,14 +111,6 @@ WaypointNavNode::WaypointNavNode() : Node("waypoint_nav_node"), current_goal_idx
     tf_listener_ = std::make_shared<tf2_ros::TransformListener>(*tf_buffer_);
 
 
-        // Alle Filter gleich initialisieren
-        kf_state_ = ekf_state_ = last_odom_pose_ = prev_odom_pose_ = Eigen::Vector3d(x, y, theta);
-        particles_.resize(N_);
-        for (auto& p : particles_) {
-            p.state = Eigen::Vector3d(x, y, theta);
-            p.weight = 1.0 / N_;
-        }
-
         RCLCPP_INFO(this->get_logger(), "Filter initialisiert bei: x=%.2f y=%.2f θ=%.2f", x, y, theta);
     } catch (const tf2::TransformException& ex) {
         RCLCPP_ERROR(this->get_logger(), "TF Lookup fehlgeschlagen: %s", ex.what());
