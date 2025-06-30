@@ -145,24 +145,32 @@ void WaypointNavNode::scanCallback(const sensor_msgs::msg::LaserScan::SharedPtr 
     double dt = 0.1;
     double dx = last_odom_pose_(0) - prev_odom_pose_(0);
     double dy = last_odom_pose_(1) - prev_odom_pose_(1);
+    double dtheta = last_odom_pose_(2) - prev_odom_pose_(2);
     double v = std::sqrt(dx*dx + dy*dy) / dt;
+    double omega = dtheta / dt;
+
     prev_odom_pose_ = last_odom_pose_;
     double z = scan->ranges[scan->ranges.size() / 2];
-    predictPF(v, dt);
+
+    predictPF(v, omega, dt);
     updatePF(z);
     Eigen::Vector3d pf_est = Eigen::Vector3d::Zero();
     for (const auto& p : particles_) pf_est += p.state;
     pf_est /= N_;
     publishPose(pf_est, path_pf_, path_pub_pf_, file_pf_, 200);
-    predictKF(v, dt);
+
+    predictKF(v, omega, dt);
     updateKF(z);
     publishPose(kf_state_, path_kf_, path_pub_kf_, file_kf_, 100);
-    predictEKF(v, dt);
+
+    predictEKF(v, omega, dt);
     updateEKF(z);
     publishPose(ekf_state_, path_ekf_, path_pub_ekf_, file_ekf_, 150);
+
     map_.header.stamp = this->now();
     map_pub_->publish(map_);
 }
+
 
 void WaypointNavNode::odomCallback(const nav_msgs::msg::Odometry::SharedPtr msg) {
     last_odom_pose_(0) = msg->pose.pose.position.x;
@@ -219,53 +227,60 @@ void WaypointNavNode::saveMapImage() {
     cv::imwrite("filter_paths.png", image);
     RCLCPP_INFO(this->get_logger(), "Pfadbild gespeichert als filter_paths.png");
 }
-void WaypointNavNode::predictPF(double v, double dt) {
+void WaypointNavNode::predictPF(double v, double omega, double dt) {
     for (auto& p : particles_) {
         double theta = p.state(2);
-        double dx = v * dt * std::cos(theta) + motion_noise_(gen_);
-        double dy = v * dt * std::sin(theta) + motion_noise_(gen_);
-        double dtheta = motion_noise_(gen_) * 0.1;
+        double noisy_v = v + motion_noise_(gen_);
+        double noisy_omega = omega + motion_noise_(gen_) * 0.1;
+
+        double dx = noisy_v * dt * std::cos(theta);
+        double dy = noisy_v * dt * std::sin(theta);
+        double dtheta = noisy_omega * dt;
+
         p.state(0) += dx;
         p.state(1) += dy;
         p.state(2) += dtheta;
     }
 }
 
-void WaypointNavNode::updatePF(double z) {
-    for (auto& p : particles_) {
-        double expected_z = p.state(0);  // stark vereinfachte Annahme
-        double error = z - expected_z;
-        p.weight = std::exp(-0.5 * error * error / (0.1 * 0.1));
-    }
 
-    double sum_weights = 0.0;
-    for (const auto& p : particles_) sum_weights += p.weight;
-    for (auto& p : particles_) p.weight /= (sum_weights + 1e-6);
-
-    std::vector<Particle> new_particles;
-    std::vector<double> weights;
-    for (const auto& p : particles_) weights.push_back(p.weight);
-    std::discrete_distribution<int> resample(weights.begin(), weights.end());
-    for (int i = 0; i < N_; ++i) {
-        new_particles.push_back(particles_[resample(gen_)]);
-    }
-    particles_ = new_particles;
-}
-
-void WaypointNavNode::predictKF(double v, double dt) {
-    Eigen::Matrix3d A = Eigen::Matrix3d::Identity();
-    A(0, 2) = -v * dt * std::sin(kf_state_(2));
-    A(1, 2) =  v * dt * std::cos(kf_state_(2));
+void WaypointNavNode::predictKF(double v, double omega, double dt) {
+    double theta = kf_state_(2);
 
     Eigen::Vector3d u;
-    u << v * dt * std::cos(kf_state_(2)),
-         v * dt * std::sin(kf_state_(2)),
-         0.0;
+    u << v * dt * std::cos(theta),
+         v * dt * std::sin(theta),
+         omega * dt;
 
     kf_state_ += u;
+
+    Eigen::Matrix3d A = Eigen::Matrix3d::Identity();
+    A(0,2) = -v * dt * std::sin(theta);
+    A(1,2) =  v * dt * std::cos(theta);
+
     Eigen::Matrix3d Q = 0.01 * Eigen::Matrix3d::Identity();
     kf_P_ = A * kf_P_ * A.transpose() + Q;
 }
+
+
+void WaypointNavNode::predictEKF(double v, double omega, double dt) {
+    double theta = ekf_state_(2);
+
+    Eigen::Vector3d u;
+    u << v * dt * std::cos(theta),
+         v * dt * std::sin(theta),
+         omega * dt;
+
+    ekf_state_ += u;
+
+    Eigen::Matrix3d A = Eigen::Matrix3d::Identity();
+    A(0,2) = -v * dt * std::sin(theta);
+    A(1,2) =  v * dt * std::cos(theta);
+
+    Eigen::Matrix3d Q = 0.01 * Eigen::Matrix3d::Identity();
+    ekf_P_ = A * ekf_P_ * A.transpose() + Q;
+}
+
 
 void WaypointNavNode::updateKF(double z) {
     double H = 1.0;
