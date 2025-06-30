@@ -18,9 +18,9 @@ find_package(tf2_geometry_msgs REQUIRED)
 find_package(Eigen3 REQUIRED)
 find_package(yaml-cpp REQUIRED)
 find_package(ament_index_cpp REQUIRED)
+find_package(sensor_msgs REQUIRED)
 
-
-# Nodes
+# Executable
 add_executable(waypoint_nav_node src/waypoint_nav_node.cpp)
 
 ament_target_dependencies(waypoint_nav_node
@@ -35,6 +35,7 @@ ament_target_dependencies(waypoint_nav_node
   Eigen3
   yaml-cpp
   ament_index_cpp
+  sensor_msgs
 )
 
 target_link_libraries(waypoint_nav_node yaml-cpp)
@@ -50,6 +51,4 @@ install(DIRECTORY
   DESTINATION share/${PROJECT_NAME}
 )
 
-
 ament_package()
-
