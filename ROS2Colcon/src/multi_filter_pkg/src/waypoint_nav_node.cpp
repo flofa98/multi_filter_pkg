@@ -17,6 +17,7 @@
 #include <Eigen/Dense>
 #include <opencv2/opencv.hpp>
 #include <random>
+#include <algorithm>  // für std::transform
 
 using namespace std::chrono_literals;
 using NavigateToPose = nav2_msgs::action::NavigateToPose;
@@ -56,8 +57,6 @@ public:
 
         map_pub_ = this->create_publisher<nav_msgs::msg::OccupancyGrid>("filter_path_map", 10);
 
-        std::default_random_engine gen;
-        std::normal_distribution<double> dist(0.0, 0.05);
         particles_.resize(N_);
         for (auto& p : particles_) {
             p.state = Eigen::Vector3d::Zero();
@@ -123,8 +122,13 @@ private:
         for (auto& p : particles_) weight_sum += p.weight;
         for (auto& p : particles_) p.weight /= weight_sum;
 
-        std::discrete_distribution<int> resample_dist(
-            particles_.begin(), particles_.end(), [](const Particle& p) { return p.weight; });
+        // extrahiere Gewichte in Vektor
+        std::vector<double> weights;
+        std::transform(particles_.begin(), particles_.end(), std::back_inserter(weights), [](const Particle& p) {
+            return p.weight;
+        });
+
+        std::discrete_distribution<int> resample_dist(weights.begin(), weights.end());
 
         std::vector<Particle> new_particles;
         for (int i = 0; i < N_; ++i) new_particles.push_back(particles_[resample_dist(gen)]);
@@ -205,5 +209,6 @@ int main(int argc, char **argv) {
     rclcpp::shutdown();
     return 0;
 }
+
 
 
