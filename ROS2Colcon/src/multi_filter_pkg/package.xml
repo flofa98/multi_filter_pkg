@@ -6,10 +6,9 @@
   <maintainer email="you@example.com">Your Name</maintainer>
   <license>Apache-2.0</license>
 
-  <!-- Build tools -->
   <buildtool_depend>ament_cmake</buildtool_depend>
 
-  <!-- Core dependencies -->
+  <!-- Core ROS2 dependencies -->
   <depend>rclcpp</depend>
   <depend>rclcpp_action</depend>
   <depend>geometry_msgs</depend>
@@ -18,6 +17,7 @@
   <depend>tf2</depend>
   <depend>tf2_ros</depend>
   <depend>tf2_geometry_msgs</depend>
+  <depend>ament_index_cpp</depend>
   <depend>Eigen3</depend>
   <depend>yaml-cpp</depend>
 
