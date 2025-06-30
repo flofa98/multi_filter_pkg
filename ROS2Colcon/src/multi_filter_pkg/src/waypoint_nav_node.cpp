@@ -2,6 +2,7 @@
 #include <rclcpp_action/rclcpp_action.hpp>
 #include <nav2_msgs/action/navigate_to_pose.hpp>
 #include <geometry_msgs/msg/pose_stamped.hpp>
+#include <nav_msgs/msg/odometry.hpp>
 #include <ament_index_cpp/get_package_share_directory.hpp>
 #include <yaml-cpp/yaml.h>
 #include <fstream>
@@ -43,6 +44,9 @@ public:
         scan_sub_ = this->create_subscription<sensor_msgs::msg::LaserScan>(
             "/scan", 10, std::bind(&WaypointNavNode::scanCallback, this, std::placeholders::_1));
 
+        odom_sub_ = this->create_subscription<nav_msgs::msg::Odometry>(
+            "/odom", 10, std::bind(&WaypointNavNode::odomCallback, this, std::placeholders::_1));
+
         path_pub_pf_ = this->create_publisher<nav_msgs::msg::Path>("pf_path", 10);
         path_pub_kf_ = this->create_publisher<nav_msgs::msg::Path>("kf_path", 10);
         path_pub_ekf_ = this->create_publisher<nav_msgs::msg::Path>("ekf_path", 10);
@@ -68,7 +72,7 @@ public:
             p.weight = 1.0 / N_;
         }
 
-        kf_state_ = ekf_state_ = Eigen::Vector3d::Zero();
+        kf_state_ = ekf_state_ = last_odom_pose_ = Eigen::Vector3d::Zero();
         kf_P_ = ekf_P_ = Eigen::Matrix3d::Identity();
 
         timer_ = this->create_wall_timer(1s, std::bind(&WaypointNavNode::sendNextGoal, this));
@@ -81,6 +85,7 @@ private:
     rclcpp::TimerBase::SharedPtr timer_;
 
     rclcpp::Subscription<sensor_msgs::msg::LaserScan>::SharedPtr scan_sub_;
+    rclcpp::Subscription<nav_msgs::msg::Odometry>::SharedPtr odom_sub_;
     rclcpp::Publisher<nav_msgs::msg::Path>::SharedPtr path_pub_pf_, path_pub_kf_, path_pub_ekf_;
     rclcpp::Publisher<nav_msgs::msg::OccupancyGrid>::SharedPtr map_pub_;
 
@@ -91,8 +96,9 @@ private:
     std::vector<Particle> particles_;
     const int N_ = 100;
 
-    Eigen::Vector3d kf_state_, ekf_state_;
+    Eigen::Vector3d kf_state_, ekf_state_, last_odom_pose_;
     Eigen::Matrix3d kf_P_, ekf_P_;
+    bool got_odom_ = false;
 
     bool loadWaypointsFromYAML(const std::string& filepath) {
         try {
@@ -112,14 +118,21 @@ private:
         }
     }
 
+    void odomCallback(const nav_msgs::msg::Odometry::SharedPtr msg) {
+        last_odom_pose_(0) = msg->pose.pose.position.x;
+        last_odom_pose_(1) = msg->pose.pose.position.y;
+        last_odom_pose_(2) = tf2::getYaw(msg->pose.pose.orientation);
+        got_odom_ = true;
+    }
+
     void scanCallback(const sensor_msgs::msg::LaserScan::SharedPtr scan) {
-        double dt = 0.1, v = 0.2;
+        if (!got_odom_) return;
         std::default_random_engine gen;
         std::normal_distribution<double> noise(0.0, 0.02);
 
         for (auto& p : particles_) {
-            p.state(0) += v * dt + noise(gen);
-            p.state(1) += noise(gen);
+            p.state(0) = last_odom_pose_(0) + noise(gen);
+            p.state(1) = last_odom_pose_(1) + noise(gen);
             double expected_range = p.state(0);
             double measured_range = scan->ranges[scan->ranges.size() / 2];
             double error = measured_range - expected_range;
@@ -143,30 +156,25 @@ private:
         Eigen::Vector3d pf_mean = Eigen::Vector3d::Zero();
         for (const auto& p : particles_) pf_mean += p.state;
         pf_mean /= N_;
-
         publishPose(pf_mean, path_pf_, path_pub_pf_, file_pf_, 200);
 
-        // KF Update
-        kf_state_(0) += v * dt;
         double measured = scan->ranges[scan->ranges.size() / 2];
         double H = 1.0, R = 0.1;
+
+        kf_state_(0) = last_odom_pose_(0);
         double y = measured - H * kf_state_(0);
         double S = H * kf_P_(0, 0) * H + R;
         double K = kf_P_(0, 0) * H / S;
         kf_state_(0) += K * y;
         kf_P_(0, 0) = (1 - K * H) * kf_P_(0, 0);
-
         publishPose(kf_state_, path_kf_, path_pub_kf_, file_kf_, 100);
 
-        // EKF Update (linearisierter KF)
-        ekf_state_(0) += v * dt;
-        double H_ekf = 1.0;
-        double y_ekf = measured - H_ekf * ekf_state_(0);
-        double S_ekf = H_ekf * ekf_P_(0, 0) * H_ekf + R;
-        double K_ekf = ekf_P_(0, 0) * H_ekf / S_ekf;
+        ekf_state_(0) = last_odom_pose_(0);
+        double y_ekf = measured - H * ekf_state_(0);
+        double S_ekf = H * ekf_P_(0, 0) * H + R;
+        double K_ekf = ekf_P_(0, 0) * H / S_ekf;
         ekf_state_(0) += K_ekf * y_ekf;
-        ekf_P_(0, 0) = (1 - K_ekf * H_ekf) * ekf_P_(0, 0);
-
+        ekf_P_(0, 0) = (1 - K_ekf * H) * ekf_P_(0, 0);
         publishPose(ekf_state_, path_ekf_, path_pub_ekf_, file_ekf_, 150);
 
         map_.header.stamp = this->now();
@@ -239,6 +247,7 @@ int main(int argc, char **argv) {
     rclcpp::shutdown();
     return 0;
 }
+
 
 
 
