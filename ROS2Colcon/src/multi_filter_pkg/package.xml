@@ -2,12 +2,13 @@
 <package format="3">
   <name>multi_filter_pkg</name>
   <version>0.1.0</version>
-  <description>Multi Filter TurtleBot3 Navigation with KF, EKF, PF and waypoint navigation</description>
+  <description>Multi Filter TurtleBot3 Navigation with KF, EKF, PF and path saving</description>
   <maintainer email="you@example.com">Your Name</maintainer>
   <license>Apache-2.0</license>
 
   <buildtool_depend>ament_cmake</buildtool_depend>
 
+  <!-- Build and run dependencies -->
   <depend>rclcpp</depend>
   <depend>rclcpp_action</depend>
   <depend>nav2_msgs</depend>
@@ -16,12 +17,14 @@
   <depend>tf2</depend>
   <depend>tf2_ros</depend>
   <depend>tf2_geometry_msgs</depend>
-  <depend>Eigen3</depend>
-  <depend>yaml-cpp</depend>
+  <depend>sensor_msgs</depend>
   <depend>ament_index_cpp</depend>
 
+  <!-- System library -->
+  <exec_depend>yaml-cpp</exec_depend>
 
   <export>
     <build_type>ament_cmake</build_type>
   </export>
 </package>
+
