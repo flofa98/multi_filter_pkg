@@ -16,15 +16,20 @@
 #include <tf2_geometry_msgs/tf2_geometry_msgs.hpp>
 #include <Eigen/Dense>
 #include <opencv2/opencv.hpp>
+#include <random>
 
 using namespace std::chrono_literals;
 using NavigateToPose = nav2_msgs::action::NavigateToPose;
 
+struct Particle {
+    Eigen::Vector3d state;
+    double weight;
+};
+
 class WaypointNavNode : public rclcpp::Node {
 public:
     WaypointNavNode() : Node("waypoint_nav_node"), current_goal_idx_(0) {
-        client_ = rclcpp_action::create_client<NavigateToPose>(
-            this, "navigate_to_pose");
+        client_ = rclcpp_action::create_client<NavigateToPose>(this, "navigate_to_pose");
 
         std::string pkg_path = ament_index_cpp::get_package_share_directory("multi_filter_pkg");
         std::string yaml_path = pkg_path + "/config/waypoints.yaml";
@@ -37,31 +42,9 @@ public:
         scan_sub_ = this->create_subscription<sensor_msgs::msg::LaserScan>(
             "/scan", 10, std::bind(&WaypointNavNode::scanCallback, this, std::placeholders::_1));
 
-        path_pub_kf_ = this->create_publisher<nav_msgs::msg::Path>("kf_path", 10);
-        path_pub_ekf_ = this->create_publisher<nav_msgs::msg::Path>("ekf_path", 10);
         path_pub_pf_ = this->create_publisher<nav_msgs::msg::Path>("pf_path", 10);
-
-        map_pub_ = this->create_publisher<nav_msgs::msg::OccupancyGrid>("filter_path_map", 10);
-
-        path_kf_.header.frame_id = "map";
-        path_ekf_.header.frame_id = "map";
         path_pf_.header.frame_id = "map";
-
-        file_kf_.open("kf_path.csv");
-        file_ekf_.open("ekf_path.csv");
         file_pf_.open("pf_path.csv");
-
-        x_kf_ = Eigen::Vector3d::Zero();
-        P_kf_ = Eigen::Matrix3d::Identity();
-        Q_kf_ = Eigen::Matrix3d::Identity() * 0.01;
-
-        x_ekf_ = Eigen::Vector3d::Zero();
-        P_ekf_ = Eigen::Matrix3d::Identity();
-        Q_ekf_ = Eigen::Matrix3d::Identity() * 0.01;
-
-        x_pf_ = Eigen::Vector3d::Zero();
-        P_pf_ = Eigen::Matrix3d::Identity();
-        Q_pf_ = Eigen::Matrix3d::Identity() * 0.01;
 
         map_.header.frame_id = "map";
         map_.info.resolution = 0.05;
@@ -70,6 +53,16 @@ public:
         map_.info.origin.position.x = -12.5;
         map_.info.origin.position.y = -12.5;
         map_.data.resize(map_.info.width * map_.info.height, 0);
+
+        map_pub_ = this->create_publisher<nav_msgs::msg::OccupancyGrid>("filter_path_map", 10);
+
+        std::default_random_engine gen;
+        std::normal_distribution<double> dist(0.0, 0.05);
+        particles_.resize(N_);
+        for (auto& p : particles_) {
+            p.state = Eigen::Vector3d::Zero();
+            p.weight = 1.0 / N_;
+        }
 
         timer_ = this->create_wall_timer(1s, std::bind(&WaypointNavNode::sendNextGoal, this));
     }
@@ -81,25 +74,15 @@ private:
     rclcpp::TimerBase::SharedPtr timer_;
 
     rclcpp::Subscription<sensor_msgs::msg::LaserScan>::SharedPtr scan_sub_;
-
-    rclcpp::Publisher<nav_msgs::msg::Path>::SharedPtr path_pub_kf_;
-    rclcpp::Publisher<nav_msgs::msg::Path>::SharedPtr path_pub_ekf_;
     rclcpp::Publisher<nav_msgs::msg::Path>::SharedPtr path_pub_pf_;
     rclcpp::Publisher<nav_msgs::msg::OccupancyGrid>::SharedPtr map_pub_;
 
-    nav_msgs::msg::Path path_kf_;
-    nav_msgs::msg::Path path_ekf_;
     nav_msgs::msg::Path path_pf_;
     nav_msgs::msg::OccupancyGrid map_;
-
-    std::ofstream file_kf_;
-    std::ofstream file_ekf_;
     std::ofstream file_pf_;
 
-    Eigen::Vector3d x_kf_, x_ekf_, x_pf_;
-    Eigen::Matrix3d P_kf_, Q_kf_;
-    Eigen::Matrix3d P_ekf_, Q_ekf_;
-    Eigen::Matrix3d P_pf_, Q_pf_;
+    std::vector<Particle> particles_;
+    const int N_ = 100;
 
     bool loadWaypointsFromYAML(const std::string& filepath) {
         try {
@@ -120,52 +103,61 @@ private:
     }
 
     void scanCallback(const sensor_msgs::msg::LaserScan::SharedPtr scan) {
-        double v = 0.2;
-        double omega = 0.0;
         double dt = 0.1;
+        double v = 0.2;
 
-        Eigen::Matrix3d F = Eigen::Matrix3d::Identity();
+        std::default_random_engine gen;
+        std::normal_distribution<double> motion_noise(0.0, 0.02);
 
-        // KF
-        Eigen::Vector3d u_kf(v * dt, 0, omega * dt);
-        x_kf_ = F * x_kf_ + u_kf;
-        P_kf_ = F * P_kf_ * F.transpose() + Q_kf_;
-        publishPose(x_kf_, path_kf_, path_pub_kf_, file_kf_, 100);
+        for (auto& p : particles_) {
+            p.state(0) += v * dt + motion_noise(gen);
+            p.state(1) += motion_noise(gen);
 
-        // EKF
-        Eigen::Vector3d u_ekf(v * dt, 0, omega * dt);
-        x_ekf_ = F * x_ekf_ + u_ekf;
-        P_ekf_ = F * P_ekf_ * F.transpose() + Q_ekf_;
-        publishPose(x_ekf_, path_ekf_, path_pub_ekf_, file_ekf_, 150);
+            double expected_range = p.state(0);
+            double measured_range = scan->ranges[scan->ranges.size() / 2];
+            double error = measured_range - expected_range;
+            p.weight = std::exp(-0.5 * error * error / 0.1);
+        }
 
-        // PF
-        Eigen::Vector3d u_pf(v * dt + 0.01 * ((rand() % 100) / 100.0 - 0.5), 0, omega * dt);
-        x_pf_ = F * x_pf_ + u_pf;
-        P_pf_ = F * P_pf_ * F.transpose() + Q_pf_;
-        publishPose(x_pf_, path_pf_, path_pub_pf_, file_pf_, 200);
+        double weight_sum = 0.0;
+        for (auto& p : particles_) weight_sum += p.weight;
+        for (auto& p : particles_) p.weight /= weight_sum;
 
+        std::discrete_distribution<int> resample_dist(
+            particles_.begin(), particles_.end(), [](const Particle& p) { return p.weight; });
+
+        std::vector<Particle> new_particles;
+        for (int i = 0; i < N_; ++i) new_particles.push_back(particles_[resample_dist(gen)]);
+        particles_ = new_particles;
+
+        Eigen::Vector3d pf_mean = Eigen::Vector3d::Zero();
+        for (const auto& p : particles_) pf_mean += p.state;
+        pf_mean /= N_;
+
+        publishPose(pf_mean, path_pf_, path_pub_pf_, file_pf_, 200);
         map_.header.stamp = this->now();
         map_pub_->publish(map_);
     }
 
-    void publishPose(const Eigen::Vector3d& x, nav_msgs::msg::Path& path,
+    void publishPose(const Eigen::Vector3d& state, nav_msgs::msg::Path& path,
                      rclcpp::Publisher<nav_msgs::msg::Path>::SharedPtr pub,
-                     std::ofstream& file, int color_val) {
+                     std::ofstream& file, int color) {
         geometry_msgs::msg::PoseStamped pose;
-        pose.header.stamp = this->now();
         pose.header.frame_id = "map";
-        pose.pose.position.x = x(0);
-        pose.pose.position.y = x(1);
+        pose.header.stamp = this->now();
+        pose.pose.position.x = state(0);
+        pose.pose.position.y = state(1);
         pose.pose.orientation.w = 1.0;
         path.poses.push_back(pose);
         path.header.stamp = this->now();
         pub->publish(path);
-        file << x(0) << "," << x(1) << "\n";
 
-        int cx = static_cast<int>((x(0) - map_.info.origin.position.x) / map_.info.resolution);
-        int cy = static_cast<int>((x(1) - map_.info.origin.position.y) / map_.info.resolution);
-        if (cx >= 0 && cy >= 0 && cx < static_cast<int>(map_.info.width) && cy < static_cast<int>(map_.info.height)) {
-            map_.data[cy * map_.info.width + cx] = color_val;
+        file << state(0) << "," << state(1) << "\n";
+
+        int x = static_cast<int>((state(0) - map_.info.origin.position.x) / map_.info.resolution);
+        int y = static_cast<int>((state(1) - map_.info.origin.position.y) / map_.info.resolution);
+        if (x >= 0 && y >= 0 && x < static_cast<int>(map_.info.width) && y < static_cast<int>(map_.info.height)) {
+            map_.data[y * map_.info.width + x] = color;
         }
     }
 
@@ -177,10 +169,7 @@ private:
 
         if (current_goal_idx_ >= waypoints_.size()) {
             RCLCPP_INFO(this->get_logger(), "Alle Ziele erreicht.");
-            file_kf_.close();
-            file_ekf_.close();
-            file_pf_.close();
-            saveMapAsImage();
+            saveMapImage();
             rclcpp::shutdown();
             return;
         }
@@ -200,19 +189,12 @@ private:
         client_->async_send_goal(goal_msg, options);
     }
 
-    void saveMapAsImage() {
-        cv::Mat img(map_.info.height, map_.info.width, CV_8UC3, cv::Scalar(255, 255, 255));
-        for (size_t y = 0; y < map_.info.height; ++y) {
-            for (size_t x = 0; x < map_.info.width; ++x) {
-                int val = map_.data[y * map_.info.width + x];
-                if (val == 100) img.at<cv::Vec3b>(y, x) = cv::Vec3b(0, 0, 255);
-                else if (val == 150) img.at<cv::Vec3b>(y, x) = cv::Vec3b(0, 255, 0);
-                else if (val == 200) img.at<cv::Vec3b>(y, x) = cv::Vec3b(255, 0, 0);
-            }
-        }
-        cv::flip(img, img, 0);
-        cv::imwrite("filter_paths.png", img);
-        RCLCPP_INFO(this->get_logger(), "Pfadbild gespeichert unter ./filter_paths.png");
+    void saveMapImage() {
+        cv::Mat image(map_.info.height, map_.info.width, CV_8UC1);
+        for (size_t i = 0; i < map_.data.size(); ++i)
+            image.data[i] = static_cast<uint8_t>(map_.data[i]);
+        cv::imwrite("filter_paths.png", image);
+        RCLCPP_INFO(this->get_logger(), "Pfadbild gespeichert als filter_paths.png");
     }
 };
 
@@ -223,4 +205,5 @@ int main(int argc, char **argv) {
     rclcpp::shutdown();
     return 0;
 }
+
 
