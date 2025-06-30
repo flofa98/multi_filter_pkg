@@ -17,7 +17,6 @@
 #include <Eigen/Dense>
 #include <opencv2/opencv.hpp>
 
-
 using namespace std::chrono_literals;
 using NavigateToPose = nav2_msgs::action::NavigateToPose;
 
@@ -41,16 +40,16 @@ public:
         path_pub_kf_ = this->create_publisher<nav_msgs::msg::Path>("kf_path", 10);
         path_pub_ekf_ = this->create_publisher<nav_msgs::msg::Path>("ekf_path", 10);
         path_pub_pf_ = this->create_publisher<nav_msgs::msg::Path>("pf_path", 10);
-        
+
         map_pub_ = this->create_publisher<nav_msgs::msg::OccupancyGrid>("filter_path_map", 10);
 
         path_kf_.header.frame_id = "map";
         path_ekf_.header.frame_id = "map";
         path_pf_.header.frame_id = "map";
 
-        file_kf_.open("/tmp/kf_path.csv");
-        file_ekf_.open("/tmp/ekf_path.csv");
-        file_pf_.open("/tmp/pf_path.csv");
+        file_kf_.open("kf_path.csv");
+        file_ekf_.open("ekf_path.csv");
+        file_pf_.open("pf_path.csv");
 
         x_kf_ = Eigen::Vector3d::Zero();
         P_kf_ = Eigen::Matrix3d::Identity();
@@ -125,46 +124,28 @@ private:
         double omega = 0.0;
         double dt = 0.1;
 
-        // KF
         Eigen::Matrix3d F = Eigen::Matrix3d::Identity();
-        Eigen::Vector3d u_kf;
-        u_kf << v * dt, 0, omega * dt;
+
+        // KF
+        Eigen::Vector3d u_kf(v * dt, 0, omega * dt);
         x_kf_ = F * x_kf_ + u_kf;
         P_kf_ = F * P_kf_ * F.transpose() + Q_kf_;
         publishPose(x_kf_, path_kf_, path_pub_kf_, file_kf_, 100);
 
         // EKF
-        Eigen::Vector3d u_ekf;
-        u_ekf << v * dt, 0, omega * dt;
+        Eigen::Vector3d u_ekf(v * dt, 0, omega * dt);
         x_ekf_ = F * x_ekf_ + u_ekf;
         P_ekf_ = F * P_ekf_ * F.transpose() + Q_ekf_;
         publishPose(x_ekf_, path_ekf_, path_pub_ekf_, file_ekf_, 150);
 
         // PF
-        Eigen::Vector3d u_pf;
-        u_pf << v * dt + 0.01 * ((rand() % 100) / 100.0 - 0.5), 0, omega * dt;
+        Eigen::Vector3d u_pf(v * dt + 0.01 * ((rand() % 100) / 100.0 - 0.5), 0, omega * dt);
         x_pf_ = F * x_pf_ + u_pf;
         P_pf_ = F * P_pf_ * F.transpose() + Q_pf_;
         publishPose(x_pf_, path_pf_, path_pub_pf_, file_pf_, 200);
 
         map_.header.stamp = this->now();
         map_pub_->publish(map_);
-    }
-
-    void saveMapAsImage(const std::string& filename) {
-        int width = map_.info.width;
-        int height = map_.info.height;
-
-        cv::Mat img(height, width, CV_8UC1);
-        for (int y = 0; y < height; ++y) {
-            for (int x = 0; x < width; ++x) {
-                uint8_t val = map_.data[y * width + x];
-                img.at<uchar>(height - 1 - y, x) = val;  // Y-Achse umdrehen für Anzeige
-            }
-        }
-
-        cv::applyColorMap(img, img, cv::COLORMAP_JET);  // Optional für bessere Visualisierung
-        cv::imwrite(filename, img);
     }
 
     void publishPose(const Eigen::Vector3d& x, nav_msgs::msg::Path& path,
@@ -199,10 +180,8 @@ private:
             file_kf_.close();
             file_ekf_.close();
             file_pf_.close();
-            saveMapAsImage("/tmp/filter_paths.png");
+            saveMapAsImage();
             rclcpp::shutdown();
-
-
             return;
         }
 
@@ -219,6 +198,21 @@ private:
         };
 
         client_->async_send_goal(goal_msg, options);
+    }
+
+    void saveMapAsImage() {
+        cv::Mat img(map_.info.height, map_.info.width, CV_8UC3, cv::Scalar(255, 255, 255));
+        for (size_t y = 0; y < map_.info.height; ++y) {
+            for (size_t x = 0; x < map_.info.width; ++x) {
+                int val = map_.data[y * map_.info.width + x];
+                if (val == 100) img.at<cv::Vec3b>(y, x) = cv::Vec3b(0, 0, 255);
+                else if (val == 150) img.at<cv::Vec3b>(y, x) = cv::Vec3b(0, 255, 0);
+                else if (val == 200) img.at<cv::Vec3b>(y, x) = cv::Vec3b(255, 0, 0);
+            }
+        }
+        cv::flip(img, img, 0);
+        cv::imwrite("filter_paths.png", img);
+        RCLCPP_INFO(this->get_logger(), "Pfadbild gespeichert unter ./filter_paths.png");
     }
 };
 
