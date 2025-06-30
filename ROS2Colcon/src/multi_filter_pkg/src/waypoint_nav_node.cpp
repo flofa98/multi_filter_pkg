@@ -292,22 +292,7 @@ void WaypointNavNode::updateKF(double z) {
     kf_P_(0,0) = (1 - K * H) * kf_P_(0,0);
 }
 
-void WaypointNavNode::predictEKF(double v, double dt) {
-    double theta = ekf_state_(2);
-    Eigen::Vector3d u;
-    u << v * dt * std::cos(theta),
-         v * dt * std::sin(theta),
-         0.0;
 
-    ekf_state_ += u;
-
-    Eigen::Matrix3d A = Eigen::Matrix3d::Identity();
-    A(0,2) = -v * dt * std::sin(theta);
-    A(1,2) =  v * dt * std::cos(theta);
-
-    Eigen::Matrix3d Q = 0.01 * Eigen::Matrix3d::Identity();
-    ekf_P_ = A * ekf_P_ * A.transpose() + Q;
-}
 
 void WaypointNavNode::updateEKF(double z) {
     double H = 1.0;
@@ -317,6 +302,30 @@ void WaypointNavNode::updateEKF(double z) {
     double K = ekf_P_(0,0) * H / S;
     ekf_state_(0) += K * y;
     ekf_P_(0,0) = (1 - K * H) * ekf_P_(0,0);
+}
+
+void WaypointNavNode::updatePF(double z) {
+    // Schritt 1: Gewichtung basierend auf Messfehler
+    for (auto& p : particles_) {
+        double expected_z = p.state(0);  // Vereinfachte Annahme
+        double error = z - expected_z;
+        p.weight = std::exp(-0.5 * error * error / (0.1 * 0.1));
+    }
+
+    // Schritt 2: Normalisieren
+    double sum_weights = 0.0;
+    for (const auto& p : particles_) sum_weights += p.weight;
+    for (auto& p : particles_) p.weight /= (sum_weights + 1e-6);
+
+    // Schritt 3: Resampling
+    std::vector<Particle> new_particles;
+    std::vector<double> weights;
+    for (const auto& p : particles_) weights.push_back(p.weight);
+    std::discrete_distribution<int> resample(weights.begin(), weights.end());
+    for (int i = 0; i < N_; ++i) {
+        new_particles.push_back(particles_[resample(gen_)]);
+    }
+    particles_ = new_particles;
 }
 
 
