@@ -17,7 +17,7 @@
 #include <Eigen/Dense>
 #include <opencv2/opencv.hpp>
 #include <random>
-#include <algorithm>  // für std::transform
+#include <algorithm>
 
 using namespace std::chrono_literals;
 using NavigateToPose = nav2_msgs::action::NavigateToPose;
@@ -44,8 +44,13 @@ public:
             "/scan", 10, std::bind(&WaypointNavNode::scanCallback, this, std::placeholders::_1));
 
         path_pub_pf_ = this->create_publisher<nav_msgs::msg::Path>("pf_path", 10);
-        path_pf_.header.frame_id = "map";
+        path_pub_kf_ = this->create_publisher<nav_msgs::msg::Path>("kf_path", 10);
+        path_pub_ekf_ = this->create_publisher<nav_msgs::msg::Path>("ekf_path", 10);
+
+        path_pf_.header.frame_id = path_kf_.header.frame_id = path_ekf_.header.frame_id = "map";
         file_pf_.open("pf_path.csv");
+        file_kf_.open("kf_path.csv");
+        file_ekf_.open("ekf_path.csv");
 
         map_.header.frame_id = "map";
         map_.info.resolution = 0.05;
@@ -63,6 +68,9 @@ public:
             p.weight = 1.0 / N_;
         }
 
+        kf_state_ = ekf_state_ = Eigen::Vector3d::Zero();
+        kf_P_ = ekf_P_ = Eigen::Matrix3d::Identity();
+
         timer_ = this->create_wall_timer(1s, std::bind(&WaypointNavNode::sendNextGoal, this));
     }
 
@@ -73,15 +81,18 @@ private:
     rclcpp::TimerBase::SharedPtr timer_;
 
     rclcpp::Subscription<sensor_msgs::msg::LaserScan>::SharedPtr scan_sub_;
-    rclcpp::Publisher<nav_msgs::msg::Path>::SharedPtr path_pub_pf_;
+    rclcpp::Publisher<nav_msgs::msg::Path>::SharedPtr path_pub_pf_, path_pub_kf_, path_pub_ekf_;
     rclcpp::Publisher<nav_msgs::msg::OccupancyGrid>::SharedPtr map_pub_;
 
-    nav_msgs::msg::Path path_pf_;
+    nav_msgs::msg::Path path_pf_, path_kf_, path_ekf_;
     nav_msgs::msg::OccupancyGrid map_;
-    std::ofstream file_pf_;
+    std::ofstream file_pf_, file_kf_, file_ekf_;
 
     std::vector<Particle> particles_;
     const int N_ = 100;
+
+    Eigen::Vector3d kf_state_, ekf_state_;
+    Eigen::Matrix3d kf_P_, ekf_P_;
 
     bool loadWaypointsFromYAML(const std::string& filepath) {
         try {
@@ -102,16 +113,13 @@ private:
     }
 
     void scanCallback(const sensor_msgs::msg::LaserScan::SharedPtr scan) {
-        double dt = 0.1;
-        double v = 0.2;
-
+        double dt = 0.1, v = 0.2;
         std::default_random_engine gen;
-        std::normal_distribution<double> motion_noise(0.0, 0.02);
+        std::normal_distribution<double> noise(0.0, 0.02);
 
         for (auto& p : particles_) {
-            p.state(0) += v * dt + motion_noise(gen);
-            p.state(1) += motion_noise(gen);
-
+            p.state(0) += v * dt + noise(gen);
+            p.state(1) += noise(gen);
             double expected_range = p.state(0);
             double measured_range = scan->ranges[scan->ranges.size() / 2];
             double error = measured_range - expected_range;
@@ -122,12 +130,10 @@ private:
         for (auto& p : particles_) weight_sum += p.weight;
         for (auto& p : particles_) p.weight /= weight_sum;
 
-        // extrahiere Gewichte in Vektor
         std::vector<double> weights;
         std::transform(particles_.begin(), particles_.end(), std::back_inserter(weights), [](const Particle& p) {
             return p.weight;
         });
-
         std::discrete_distribution<int> resample_dist(weights.begin(), weights.end());
 
         std::vector<Particle> new_particles;
@@ -139,6 +145,30 @@ private:
         pf_mean /= N_;
 
         publishPose(pf_mean, path_pf_, path_pub_pf_, file_pf_, 200);
+
+        // KF Update
+        kf_state_(0) += v * dt;
+        double measured = scan->ranges[scan->ranges.size() / 2];
+        double H = 1.0, R = 0.1;
+        double y = measured - H * kf_state_(0);
+        double S = H * kf_P_(0, 0) * H + R;
+        double K = kf_P_(0, 0) * H / S;
+        kf_state_(0) += K * y;
+        kf_P_(0, 0) = (1 - K * H) * kf_P_(0, 0);
+
+        publishPose(kf_state_, path_kf_, path_pub_kf_, file_kf_, 100);
+
+        // EKF Update (linearisierter KF)
+        ekf_state_(0) += v * dt;
+        double H_ekf = 1.0;
+        double y_ekf = measured - H_ekf * ekf_state_(0);
+        double S_ekf = H_ekf * ekf_P_(0, 0) * H_ekf + R;
+        double K_ekf = ekf_P_(0, 0) * H_ekf / S_ekf;
+        ekf_state_(0) += K_ekf * y_ekf;
+        ekf_P_(0, 0) = (1 - K_ekf * H_ekf) * ekf_P_(0, 0);
+
+        publishPose(ekf_state_, path_ekf_, path_pub_ekf_, file_ekf_, 150);
+
         map_.header.stamp = this->now();
         map_pub_->publish(map_);
     }
@@ -209,6 +239,7 @@ int main(int argc, char **argv) {
     rclcpp::shutdown();
     return 0;
 }
+
 
 
 
