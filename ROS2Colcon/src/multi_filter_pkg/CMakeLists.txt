@@ -17,6 +17,8 @@ find_package(tf2_ros REQUIRED)
 find_package(tf2_geometry_msgs REQUIRED)
 find_package(Eigen3 REQUIRED)
 find_package(yaml-cpp REQUIRED)
+find_package(ament_index_cpp REQUIRED)
+
 
 # Nodes
 add_executable(waypoint_nav_node src/waypoint_nav_node.cpp)
@@ -32,6 +34,7 @@ ament_target_dependencies(waypoint_nav_node
   tf2_geometry_msgs
   Eigen3
   yaml-cpp
+  ament_index_cpp
 )
 
 target_link_libraries(waypoint_nav_node yaml-cpp)
