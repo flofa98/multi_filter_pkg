@@ -15,6 +15,8 @@
 #include <tf2/LinearMath/Quaternion.h>
 #include <tf2_geometry_msgs/tf2_geometry_msgs.hpp>
 #include <Eigen/Dense>
+#include <opencv2/opencv.hpp>
+
 
 using namespace std::chrono_literals;
 using NavigateToPose = nav2_msgs::action::NavigateToPose;
@@ -149,6 +151,22 @@ private:
         map_pub_->publish(map_);
     }
 
+    void saveMapAsImage(const std::string& filename) {
+        int width = map_.info.width;
+        int height = map_.info.height;
+
+        cv::Mat img(height, width, CV_8UC1);
+        for (int y = 0; y < height; ++y) {
+            for (int x = 0; x < width; ++x) {
+                uint8_t val = map_.data[y * width + x];
+                img.at<uchar>(height - 1 - y, x) = val;  // Y-Achse umdrehen für Anzeige
+            }
+        }
+
+        cv::applyColorMap(img, img, cv::COLORMAP_JET);  // Optional für bessere Visualisierung
+        cv::imwrite(filename, img);
+    }
+
     void publishPose(const Eigen::Vector3d& x, nav_msgs::msg::Path& path,
                      rclcpp::Publisher<nav_msgs::msg::Path>::SharedPtr pub,
                      std::ofstream& file, int color_val) {
@@ -181,7 +199,10 @@ private:
             file_kf_.close();
             file_ekf_.close();
             file_pf_.close();
+            saveMapAsImage("/tmp/filter_paths.png");
             rclcpp::shutdown();
+
+
             return;
         }
 
