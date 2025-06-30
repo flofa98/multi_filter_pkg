@@ -136,12 +136,6 @@ try {
     map_.info.origin.position.x = -12.5;
     map_.info.origin.position.y = -12.5;
     map_.data.resize(map_.info.width * map_.info.height, 0);
-    particles_.resize(N_);
-    for (auto& p : particles_) {
-        p.state = Eigen::Vector3d::Zero();
-        p.weight = 1.0 / N_;
-    }
-    kf_state_ = ekf_state_ = last_odom_pose_ = prev_odom_pose_ = Eigen::Vector3d::Zero();
     kf_P_ = ekf_P_ = Eigen::Matrix3d::Identity();
     timer_ = this->create_wall_timer(1s, std::bind(&WaypointNavNode::sendNextGoal, this));
 }
