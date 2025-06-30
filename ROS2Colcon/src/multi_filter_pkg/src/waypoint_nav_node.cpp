@@ -19,6 +19,8 @@
 #include <opencv2/opencv.hpp>
 #include <random>
 #include <algorithm>
+#include <tf2/utils.h>
+
 
 using namespace std::chrono_literals;
 using NavigateToPose = nav2_msgs::action::NavigateToPose;
