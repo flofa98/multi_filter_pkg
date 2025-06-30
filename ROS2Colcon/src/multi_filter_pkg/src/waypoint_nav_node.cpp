@@ -112,7 +112,8 @@ WaypointNavNode::WaypointNavNode() : Node("waypoint_nav_node"), current_goal_idx
     rclcpp::sleep_for(2s);  // kurzes Delay, um TF-System Zeit zu geben
 
     try {
-        auto tf = tf_buffer_->lookupTransform("map", "base_link", tf2::TimePointZero, rclcpp::Duration::from_seconds(2.0));
+        auto tf = tf_buffer_->lookupTransform("map", "base_link", rclcpp::Time(0), rclcpp::Duration::from_seconds(2.0));
+
 
         double x = tf.transform.translation.x;
         double y = tf.transform.translation.y;
