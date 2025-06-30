@@ -35,8 +35,46 @@ public:
 
 private:
     void sendNextGoal();
-    void scanCallback(const sensor_msgs::msg::LaserScan::SharedPtr scan);
-    void odomCallback(const nav_msgs::msg::Odometry::SharedPtr msg);
+
+    void scanCallback(const sensor_msgs::msg::LaserScan::SharedPtr scan) {
+        if (!got_odom_) return;
+        double dt = 0.1;
+        double dx = last_odom_pose_(0) - prev_odom_pose_(0);
+        double dy = last_odom_pose_(1) - prev_odom_pose_(1);
+        double v = std::sqrt(dx*dx + dy*dy) / dt;
+        prev_odom_pose_ = last_odom_pose_;
+
+        double z = scan->ranges[scan->ranges.size() / 2];
+
+        predictPF(v, dt);
+        updatePF(z);
+        Eigen::Vector3d pf_est = Eigen::Vector3d::Zero();
+        for (const auto& p : particles_) pf_est += p.state;
+        pf_est /= N_;
+        publishPose(pf_est, path_pf_, path_pub_pf_, file_pf_, 200);
+
+        predictKF(v, dt);
+        updateKF(z);
+        publishPose(kf_state_, path_kf_, path_pub_kf_, file_kf_, 100);
+
+        predictEKF(v, dt);
+        updateEKF(z);
+        publishPose(ekf_state_, path_ekf_, path_pub_ekf_, file_ekf_, 150);
+
+        map_.header.stamp = this->now();
+        map_pub_->publish(map_);
+    }
+
+    void odomCallback(const nav_msgs::msg::Odometry::SharedPtr msg) {
+        last_odom_pose_(0) = msg->pose.pose.position.x;
+        last_odom_pose_(1) = msg->pose.pose.position.y;
+        last_odom_pose_(2) = tf2::getYaw(msg->pose.pose.orientation);
+        if (!got_odom_) {
+            prev_odom_pose_ = last_odom_pose_;
+            got_odom_ = true;
+        }
+    }
+
     bool loadWaypointsFromYAML(const std::string& filepath);
     void publishPose(const Eigen::Vector3d& state, nav_msgs::msg::Path& path,
                      rclcpp::Publisher<nav_msgs::msg::Path>::SharedPtr pub,
@@ -131,7 +169,6 @@ int main(int argc, char **argv) {
     rclcpp::shutdown();
     return 0;
 }
-
 
 
 
