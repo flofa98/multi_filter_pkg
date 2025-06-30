@@ -111,12 +111,6 @@ WaypointNavNode::WaypointNavNode() : Node("waypoint_nav_node"), current_goal_idx
     tf_listener_ = std::make_shared<tf2_ros::TransformListener>(*tf_buffer_);
 
 
-        RCLCPP_INFO(this->get_logger(), "Filter initialisiert bei: x=%.2f y=%.2f θ=%.2f", x, y, theta);
-    } catch (const tf2::TransformException& ex) {
-        RCLCPP_ERROR(this->get_logger(), "TF Lookup fehlgeschlagen: %s", ex.what());
-        rclcpp::shutdown();
-        return;
-    }
 
     // Nur starten, wenn TF und Initialisierung erfolgreich
     timer_ = this->create_wall_timer(1s, std::bind(&WaypointNavNode::sendNextGoal, this));
