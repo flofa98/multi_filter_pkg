@@ -86,51 +86,62 @@ private:
 
 WaypointNavNode::WaypointNavNode() : Node("waypoint_nav_node"), current_goal_idx_(0) {
     client_ = rclcpp_action::create_client<NavigateToPose>(this, "navigate_to_pose");
+
     std::string pkg_path = ament_index_cpp::get_package_share_directory("multi_filter_pkg");
     std::string yaml_path = pkg_path + "/config/waypoints.yaml";
     if (!loadWaypointsFromYAML(yaml_path)) {
         RCLCPP_ERROR(this->get_logger(), "Fehler beim Laden der Waypoints.");
         rclcpp::shutdown();
+        return;
     }
+
     scan_sub_ = this->create_subscription<sensor_msgs::msg::LaserScan>(
         "/scan", 10, std::bind(&WaypointNavNode::scanCallback, this, std::placeholders::_1));
     odom_sub_ = this->create_subscription<nav_msgs::msg::Odometry>(
         "/odom", 10, std::bind(&WaypointNavNode::odomCallback, this, std::placeholders::_1));
+
     path_pub_pf_ = this->create_publisher<nav_msgs::msg::Path>("pf_path", 10);
     path_pub_kf_ = this->create_publisher<nav_msgs::msg::Path>("kf_path", 10);
     path_pub_ekf_ = this->create_publisher<nav_msgs::msg::Path>("ekf_path", 10);
     map_pub_ = this->create_publisher<nav_msgs::msg::OccupancyGrid>("filter_path_map", 10);
+
     // TF2 initialisieren
-tf_buffer_ = std::make_unique<tf2_ros::Buffer>(this->get_clock());
-tf_listener_ = std::make_shared<tf2_ros::TransformListener>(*tf_buffer_);
+    tf_buffer_ = std::make_unique<tf2_ros::Buffer>(this->get_clock());
+    tf_listener_ = std::make_shared<tf2_ros::TransformListener>(*tf_buffer_);
 
+    rclcpp::sleep_for(2s);  // kurzes Delay, um TF-System Zeit zu geben
 
-rclcpp::sleep_for(1s);
+    try {
+        auto tf = tf_buffer_->lookupTransform("map", "base_link", tf2::TimePointZero, rclcpp::Duration::from_seconds(2.0));
 
-try {
-    auto tf = tf_buffer_->lookupTransform("map", "base_link", tf2::TimePointZero);
+        double x = tf.transform.translation.x;
+        double y = tf.transform.translation.y;
+        double theta = tf2::getYaw(tf.transform.rotation);
 
-    double x = tf.transform.translation.x;
-    double y = tf.transform.translation.y;
-    double theta = tf2::getYaw(tf.transform.rotation);
+        // Alle Filter gleich initialisieren
+        kf_state_ = ekf_state_ = last_odom_pose_ = prev_odom_pose_ = Eigen::Vector3d(x, y, theta);
+        particles_.resize(N_);
+        for (auto& p : particles_) {
+            p.state = Eigen::Vector3d(x, y, theta);
+            p.weight = 1.0 / N_;
+        }
 
-    // Alle Filter gleich initialisieren
-    kf_state_ = ekf_state_ = last_odom_pose_ = prev_odom_pose_ = Eigen::Vector3d(x, y, theta);
-    for (auto& p : particles_) {
-        p.state = Eigen::Vector3d(x, y, theta);
-        p.weight = 1.0 / N_;
+        RCLCPP_INFO(this->get_logger(), "Filter initialisiert bei: x=%.2f y=%.2f θ=%.2f", x, y, theta);
+    } catch (const tf2::TransformException& ex) {
+        RCLCPP_ERROR(this->get_logger(), "TF Lookup fehlgeschlagen: %s", ex.what());
+        rclcpp::shutdown();
+        return;
     }
 
-    RCLCPP_INFO(this->get_logger(), "Filter initialisiert bei: x=%.2f y=%.2f θ=%.2f", x, y, theta);
-} catch (const tf2::TransformException& ex) {
-    RCLCPP_ERROR(this->get_logger(), "TF Lookup fehlgeschlagen: %s", ex.what());
-    rclcpp::shutdown();
-}
+    // Nur starten, wenn TF und Initialisierung erfolgreich
+    timer_ = this->create_wall_timer(1s, std::bind(&WaypointNavNode::sendNextGoal, this));
 
+    // Restliche Initialisierung
     path_pf_.header.frame_id = path_kf_.header.frame_id = path_ekf_.header.frame_id = "map";
     file_pf_.open("pf_path.csv");
     file_kf_.open("kf_path.csv");
     file_ekf_.open("ekf_path.csv");
+
     map_.header.frame_id = "map";
     map_.info.resolution = 0.05;
     map_.info.width = 500;
@@ -138,9 +149,10 @@ try {
     map_.info.origin.position.x = -12.5;
     map_.info.origin.position.y = -12.5;
     map_.data.resize(map_.info.width * map_.info.height, 0);
+
     kf_P_ = ekf_P_ = Eigen::Matrix3d::Identity();
-    timer_ = this->create_wall_timer(1s, std::bind(&WaypointNavNode::sendNextGoal, this));
 }
+
 
 void WaypointNavNode::sendNextGoal() {
     if (!client_->wait_for_action_server(5s)) {
