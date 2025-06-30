@@ -105,19 +105,11 @@ WaypointNavNode::WaypointNavNode() : Node("waypoint_nav_node"), current_goal_idx
     path_pub_ekf_ = this->create_publisher<nav_msgs::msg::Path>("ekf_path", 10);
     map_pub_ = this->create_publisher<nav_msgs::msg::OccupancyGrid>("filter_path_map", 10);
 
+ 
     // TF2 initialisieren
     tf_buffer_ = std::make_unique<tf2_ros::Buffer>(this->get_clock());
     tf_listener_ = std::make_shared<tf2_ros::TransformListener>(*tf_buffer_);
 
-    rclcpp::sleep_for(2s);  // kurzes Delay, um TF-System Zeit zu geben
-
-    try {
-        auto tf = tf_buffer_->lookupTransform("map", "base_link", rclcpp::Time(0), rclcpp::Duration::from_seconds(2.0));
-
-
-        double x = tf.transform.translation.x;
-        double y = tf.transform.translation.y;
-        double theta = tf2::getYaw(tf.transform.rotation);
 
         // Alle Filter gleich initialisieren
         kf_state_ = ekf_state_ = last_odom_pose_ = prev_odom_pose_ = Eigen::Vector3d(x, y, theta);
@@ -210,16 +202,34 @@ void WaypointNavNode::scanCallback(const sensor_msgs::msg::LaserScan::SharedPtr 
     map_pub_->publish(map_);
 }
 
-
 void WaypointNavNode::odomCallback(const nav_msgs::msg::Odometry::SharedPtr msg) {
     last_odom_pose_(0) = msg->pose.pose.position.x;
     last_odom_pose_(1) = msg->pose.pose.position.y;
     last_odom_pose_(2) = tf2::getYaw(msg->pose.pose.orientation);
+
     if (!got_odom_) {
-        prev_odom_pose_ = last_odom_pose_;
         got_odom_ = true;
+        prev_odom_pose_ = last_odom_pose_;
+
+        try {
+            auto tf = tf_buffer_->lookupTransform("map", "base_link", tf2::TimePointZero, tf2::durationFromSec(2.0));
+            double x = tf.transform.translation.x;
+            double y = tf.transform.translation.y;
+            double theta = tf2::getYaw(tf.transform.rotation);
+
+            kf_state_ = ekf_state_ = last_odom_pose_ = prev_odom_pose_ = Eigen::Vector3d(x, y, theta);
+            for (auto& p : particles_) {
+                p.state = Eigen::Vector3d(x, y, theta);
+                p.weight = 1.0 / N_;
+            }
+
+            RCLCPP_INFO(this->get_logger(), "Filter initialisiert bei: x=%.2f y=%.2f θ=%.2f", x, y, theta);
+        } catch (const tf2::TransformException& ex) {
+            RCLCPP_WARN(this->get_logger(), "TF Lookup für Initialisierung fehlgeschlagen: %s", ex.what());
+        }
     }
 }
+
 
 bool WaypointNavNode::loadWaypointsFromYAML(const std::string& filepath) {
     try {
