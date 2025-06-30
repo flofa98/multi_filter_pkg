@@ -1,0 +1,14 @@
+import pandas as pd
+import matplotlib.pyplot as plt
+
+kf = pd.read_csv("kf_path.csv")
+ekf = pd.read_csv("ekf_path.csv")
+pf = pd.read_csv("pf_path.csv")
+
+plt.plot(kf["x"], kf["y"], label="KF")
+plt.plot(ekf["x"], ekf["y"], label="EKF")
+plt.plot(pf["x"], pf["y"], label="PF")
+plt.legend()
+plt.axis("equal")
+plt.title("Vergleich der geschätzten Roboterpfade")
+plt.show()
