@@ -12,15 +12,14 @@ find_package(rclcpp_action REQUIRED)
 find_package(nav2_msgs REQUIRED)
 find_package(nav_msgs REQUIRED)
 find_package(geometry_msgs REQUIRED)
+find_package(sensor_msgs REQUIRED)
 find_package(tf2 REQUIRED)
 find_package(tf2_ros REQUIRED)
 find_package(tf2_geometry_msgs REQUIRED)
 find_package(Eigen3 REQUIRED)
 find_package(yaml-cpp REQUIRED)
 find_package(ament_index_cpp REQUIRED)
-find_package(sensor_msgs REQUIRED)
 find_package(OpenCV REQUIRED)
-
 
 # Executable
 add_executable(waypoint_nav_node src/waypoint_nav_node.cpp)
@@ -31,18 +30,21 @@ ament_target_dependencies(waypoint_nav_node
   nav2_msgs
   nav_msgs
   geometry_msgs
+  sensor_msgs
   tf2
   tf2_ros
   tf2_geometry_msgs
   Eigen3
   yaml-cpp
   ament_index_cpp
-  sensor_msgs
+  OpenCV
 )
 
-target_link_libraries(waypoint_nav_node yaml-cpp)
-target_link_libraries(waypoint_nav_node ${OpenCV_LIBS})
-
+# OpenCV und yaml-cpp einbinden (Link Libraries)
+target_link_libraries(waypoint_nav_node
+  yaml-cpp
+  ${OpenCV_LIBS}
+)
 
 # Installieren
 install(TARGETS
@@ -56,3 +58,4 @@ install(DIRECTORY
 )
 
 ament_package()
+
