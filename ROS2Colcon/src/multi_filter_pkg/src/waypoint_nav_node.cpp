@@ -247,11 +247,19 @@ void WaypointNavNode::updatePF(double z) {
         sum_weights += p.weight;
     }
     for (auto& p : particles_) p.weight /= (sum_weights + 1e-6);
-    std::discrete_distribution<> dist(particles_.begin(), particles_.end(), [](auto& p){ return p.weight; });
+
+    // Gewichte extrahieren
+    std::vector<double> weights;
+    for (const auto& p : particles_) weights.push_back(p.weight);
+
+    std::discrete_distribution<> dist(weights.begin(), weights.end());
     std::vector<Particle> new_particles;
-    for (int i = 0; i < N_; ++i) new_particles.push_back(particles_[dist(gen_)]);
+    for (int i = 0; i < N_; ++i)
+        new_particles.push_back(particles_[dist(gen_)]);
+
     particles_ = new_particles;
 }
+
 
 double WaypointNavNode::simulateRaycast(const Eigen::Vector3d& state) {
     return state(0) + sensor_noise_(gen_);
