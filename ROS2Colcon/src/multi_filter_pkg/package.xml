@@ -14,21 +14,23 @@
   <depend>nav2_msgs</depend>
   <depend>nav_msgs</depend>
   <depend>geometry_msgs</depend>
+  <depend>sensor_msgs</depend>
   <depend>tf2</depend>
   <depend>tf2_ros</depend>
   <depend>tf2_geometry_msgs</depend>
-  <depend>sensor_msgs</depend>
   <depend>ament_index_cpp</depend>
   <depend>cv_bridge</depend>
   <depend>image_transport</depend>
-  <depend>OpenCV</depend>
 
-
-  <!-- System library -->
+  <!-- C++ and external libraries -->
+  <build_depend>OpenCV</build_depend>
+  <exec_depend>OpenCV</exec_depend>
+  <build_depend>yaml-cpp</build_depend>
   <exec_depend>yaml-cpp</exec_depend>
 
   <export>
     <build_type>ament_cmake</build_type>
   </export>
 </package>
+
 
