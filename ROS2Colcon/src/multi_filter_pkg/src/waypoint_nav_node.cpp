@@ -3,16 +3,15 @@
 #include <nav2_msgs/action/navigate_to_pose.hpp>
 #include <geometry_msgs/msg/pose_stamped.hpp>
 #include <nav_msgs/msg/odometry.hpp>
+#include <geometry_msgs/msg/twist.hpp>
 #include <ament_index_cpp/get_package_share_directory.hpp>
 #include <yaml-cpp/yaml.h>
 #include <fstream>
 #include <vector>
 #include <string>
 #include <nav_msgs/msg/path.hpp>
-#include <geometry_msgs/msg/pose_with_covariance_stamped.hpp>
 #include <sensor_msgs/msg/laser_scan.hpp>
 #include <nav_msgs/msg/occupancy_grid.hpp>
-#include <nav_msgs/msg/map_meta_data.hpp>
 #include <tf2/LinearMath/Quaternion.h>
 #include <tf2_geometry_msgs/tf2_geometry_msgs.hpp>
 #include <tf2/utils.h>
@@ -22,6 +21,7 @@
 #include <opencv2/opencv.hpp>
 #include <random>
 #include <algorithm>
+#include <cmath>
 
 using namespace std::chrono_literals;
 using NavigateToPose = nav2_msgs::action::NavigateToPose;
@@ -37,9 +37,7 @@ public:
 
 private:
     void sendNextGoal();
-
-    void scanCallback(const sensor_msgs::msg::LaserScan::SharedPtr scan);
-    void odomCallback(const nav_msgs::msg::Odometry::SharedPtr msg);
+    void cmdVelCallback(const geometry_msgs::msg::Twist::SharedPtr msg);
     bool loadWaypointsFromYAML(const std::string& filepath);
     void publishPose(const Eigen::Vector3d& state, nav_msgs::msg::Path& path,
                      rclcpp::Publisher<nav_msgs::msg::Path>::SharedPtr pub,
@@ -52,14 +50,14 @@ private:
     void updateKF(double z);
     void updateEKF(double z);
     void updatePF(double z);
+    double simulateRaycast(const Eigen::Vector3d& state);
 
     rclcpp_action::Client<NavigateToPose>::SharedPtr client_;
     std::vector<geometry_msgs::msg::PoseStamped> waypoints_;
     size_t current_goal_idx_;
     rclcpp::TimerBase::SharedPtr timer_;
 
-    rclcpp::Subscription<sensor_msgs::msg::LaserScan>::SharedPtr scan_sub_;
-    rclcpp::Subscription<nav_msgs::msg::Odometry>::SharedPtr odom_sub_;
+    rclcpp::Subscription<geometry_msgs::msg::Twist>::SharedPtr cmd_sub_;
     rclcpp::Publisher<nav_msgs::msg::Path>::SharedPtr path_pub_pf_, path_pub_kf_, path_pub_ekf_;
     rclcpp::Publisher<nav_msgs::msg::OccupancyGrid>::SharedPtr map_pub_;
 
@@ -70,9 +68,10 @@ private:
     std::vector<Particle> particles_;
     const int N_ = 100;
 
-    Eigen::Vector3d kf_state_, ekf_state_, last_odom_pose_, prev_odom_pose_;
+    Eigen::Vector3d kf_state_, ekf_state_;
     Eigen::Matrix3d kf_P_, ekf_P_;
-    bool got_odom_ = false;
+    bool got_cmd_ = false;
+    rclcpp::Time last_cmd_time_;
 
     std::default_random_engine gen_;
     std::normal_distribution<double> motion_noise_{0.0, 0.02};
@@ -80,46 +79,18 @@ private:
     std::shared_ptr<tf2_ros::TransformListener> tf_listener_;
     std::unique_ptr<tf2_ros::Buffer> tf_buffer_;
 
+    double last_v_ = 0.0;
+    double last_omega_ = 0.0;
 };
 
-// IMPLEMENTATION
-
 WaypointNavNode::WaypointNavNode() : Node("waypoint_nav_node"), current_goal_idx_(0) {
-    client_ = rclcpp_action::create_client<NavigateToPose>(this, "navigate_to_pose");
-
-    std::string pkg_path = ament_index_cpp::get_package_share_directory("multi_filter_pkg");
-    std::string yaml_path = pkg_path + "/config/waypoints.yaml";
-    if (!loadWaypointsFromYAML(yaml_path)) {
-        RCLCPP_ERROR(this->get_logger(), "Fehler beim Laden der Waypoints.");
-        rclcpp::shutdown();
-        return;
-    }
-
-    scan_sub_ = this->create_subscription<sensor_msgs::msg::LaserScan>(
-        "/scan", 10, std::bind(&WaypointNavNode::scanCallback, this, std::placeholders::_1));
-    odom_sub_ = this->create_subscription<nav_msgs::msg::Odometry>(
-        "/odom", 10, std::bind(&WaypointNavNode::odomCallback, this, std::placeholders::_1));
+    cmd_sub_ = this->create_subscription<geometry_msgs::msg::Twist>(
+        "/cmd_vel", 10, std::bind(&WaypointNavNode::cmdVelCallback, this, std::placeholders::_1));
 
     path_pub_pf_ = this->create_publisher<nav_msgs::msg::Path>("pf_path", 10);
     path_pub_kf_ = this->create_publisher<nav_msgs::msg::Path>("kf_path", 10);
     path_pub_ekf_ = this->create_publisher<nav_msgs::msg::Path>("ekf_path", 10);
     map_pub_ = this->create_publisher<nav_msgs::msg::OccupancyGrid>("filter_path_map", 10);
-
- 
-    // TF2 initialisieren
-    tf_buffer_ = std::make_unique<tf2_ros::Buffer>(this->get_clock());
-    tf_listener_ = std::make_shared<tf2_ros::TransformListener>(*tf_buffer_);
-
-
-
-    // Nur starten, wenn TF und Initialisierung erfolgreich
-    timer_ = this->create_wall_timer(1s, std::bind(&WaypointNavNode::sendNextGoal, this));
-
-    // Restliche Initialisierung
-    path_pf_.header.frame_id = path_kf_.header.frame_id = path_ekf_.header.frame_id = "map";
-    file_pf_.open("pf_path.csv");
-    file_kf_.open("kf_path.csv");
-    file_ekf_.open("ekf_path.csv");
 
     map_.header.frame_id = "map";
     map_.info.resolution = 0.05;
@@ -130,109 +101,135 @@ WaypointNavNode::WaypointNavNode() : Node("waypoint_nav_node"), current_goal_idx
     map_.data.resize(map_.info.width * map_.info.height, 0);
 
     kf_P_ = ekf_P_ = Eigen::Matrix3d::Identity();
-}
+    kf_state_ = ekf_state_ = Eigen::Vector3d(0, 0, 0);
 
-
-void WaypointNavNode::sendNextGoal() {
-    if (!client_->wait_for_action_server(5s)) {
-        RCLCPP_WARN(this->get_logger(), "Warte auf Nav2 Action-Server...");
-        return;
+    for (int i = 0; i < N_; ++i) {
+        particles_.push_back({Eigen::Vector3d(0, 0, 0), 1.0 / N_});
     }
-    if (current_goal_idx_ >= waypoints_.size()) {
-        RCLCPP_INFO(this->get_logger(), "Alle Ziele erreicht.");
-        saveMapImage();
-        rclcpp::shutdown();
-        return;
+
+    timer_ = this->create_wall_timer(100ms, [this]() {
+        if (!got_cmd_) return;
+        double dt = (this->now() - last_cmd_time_).seconds();
+        double z = simulateRaycast(kf_state_);
+
+        predictPF(last_v_, last_omega_, dt);
+        updatePF(z);
+        Eigen::Vector3d pf_est = Eigen::Vector3d::Zero();
+        for (const auto& p : particles_) pf_est += p.state;
+        pf_est /= N_;
+        publishPose(pf_est, path_pf_, path_pub_pf_, file_pf_, 200);
+
+        predictKF(last_v_, last_omega_, dt);
+        updateKF(z);
+        publishPose(kf_state_, path_kf_, path_pub_kf_, file_kf_, 100);
+
+        predictEKF(last_v_, last_omega_, dt);
+        updateEKF(z);
+        publishPose(ekf_state_, path_ekf_, path_pub_ekf_, file_ekf_, 150);
+
+        map_.header.stamp = this->now();
+        map_pub_->publish(map_);
+        last_cmd_time_ = this->now();
+    });
+}
+
+void WaypointNavNode::cmdVelCallback(const geometry_msgs::msg::Twist::SharedPtr msg) {
+    last_v_ = msg->linear.x;
+    last_omega_ = msg->angular.z;
+    got_cmd_ = true;
+    last_cmd_time_ = this->now();
+}
+
+double WaypointNavNode::simulateRaycast(const Eigen::Vector3d& state) {
+    double x = state(0);
+    double y = state(1);
+    double theta = state(2);
+    double max_range = 5.0;
+    double step = map_.info.resolution;
+
+    for (double r = 0.0; r <= max_range; r += step) {
+        double rx = x + r * std::cos(theta);
+        double ry = y + r * std::sin(theta);
+
+        int mx = static_cast<int>((rx - map_.info.origin.position.x) / map_.info.resolution);
+        int my = static_cast<int>((ry - map_.info.origin.position.y) / map_.info.resolution);
+
+        if (mx < 0 || my < 0 || mx >= static_cast<int>(map_.info.width) || my >= static_cast<int>(map_.info.height))
+            return r;
+
+        if (map_.data[my * map_.info.width + mx] > 50)
+            return r;
     }
-    auto goal_msg = NavigateToPose::Goal();
-    goal_msg.pose = waypoints_[current_goal_idx_];
-    goal_msg.behavior_tree = "";
-    rclcpp_action::Client<NavigateToPose>::SendGoalOptions options;
-    options.goal_response_callback = [](auto) {};
-    options.feedback_callback = [](auto, auto) {};
-    options.result_callback = [this](auto result) {
-        RCLCPP_INFO(this->get_logger(), "Ziel %ld erreicht.", current_goal_idx_);
-        current_goal_idx_++;
-    };
-    client_->async_send_goal(goal_msg, options);
+    return max_range;
 }
 
-void WaypointNavNode::scanCallback(const sensor_msgs::msg::LaserScan::SharedPtr scan) {
-    if (!got_odom_) return;
-    double dt = 0.1;
-    double dx = last_odom_pose_(0) - prev_odom_pose_(0);
-    double dy = last_odom_pose_(1) - prev_odom_pose_(1);
-    double dtheta = last_odom_pose_(2) - prev_odom_pose_(2);
-    double v = std::sqrt(dx*dx + dy*dy) / dt;
-    double omega = dtheta / dt;
-
-    prev_odom_pose_ = last_odom_pose_;
-    double z = scan->ranges[scan->ranges.size() / 2];
-
-    predictPF(v, omega, dt);
-    updatePF(z);
-    Eigen::Vector3d pf_est = Eigen::Vector3d::Zero();
-    for (const auto& p : particles_) pf_est += p.state;
-    pf_est /= N_;
-    publishPose(pf_est, path_pf_, path_pub_pf_, file_pf_, 200);
-
-    predictKF(v, omega, dt);
-    updateKF(z);
-    publishPose(kf_state_, path_kf_, path_pub_kf_, file_kf_, 100);
-
-    predictEKF(v, omega, dt);
-    updateEKF(z);
-    publishPose(ekf_state_, path_ekf_, path_pub_ekf_, file_ekf_, 150);
-
-    map_.header.stamp = this->now();
-    map_pub_->publish(map_);
-}
-
-void WaypointNavNode::odomCallback(const nav_msgs::msg::Odometry::SharedPtr msg) {
-    last_odom_pose_(0) = msg->pose.pose.position.x;
-    last_odom_pose_(1) = msg->pose.pose.position.y;
-    last_odom_pose_(2) = tf2::getYaw(msg->pose.pose.orientation);
-
-    if (!got_odom_) {
-        got_odom_ = true;
-        prev_odom_pose_ = last_odom_pose_;
-
-        try {
-            auto tf = tf_buffer_->lookupTransform("map", "base_link", tf2::TimePointZero, tf2::durationFromSec(2.0));
-            double x = tf.transform.translation.x;
-            double y = tf.transform.translation.y;
-            double theta = tf2::getYaw(tf.transform.rotation);
-
-            kf_state_ = ekf_state_ = last_odom_pose_ = prev_odom_pose_ = Eigen::Vector3d(x, y, theta);
-            for (auto& p : particles_) {
-                p.state = Eigen::Vector3d(x, y, theta);
-                p.weight = 1.0 / N_;
-            }
-
-            RCLCPP_INFO(this->get_logger(), "Filter initialisiert bei: x=%.2f y=%.2f θ=%.2f", x, y, theta);
-        } catch (const tf2::TransformException& ex) {
-            RCLCPP_WARN(this->get_logger(), "TF Lookup für Initialisierung fehlgeschlagen: %s", ex.what());
-        }
+void WaypointNavNode::predictPF(double v, double omega, double dt) {
+    for (auto& p : particles_) {
+        double theta = p.state(2);
+        double noisy_v = v + motion_noise_(gen_);
+        double noisy_omega = omega + motion_noise_(gen_) * 0.1;
+        p.state(0) += noisy_v * dt * std::cos(theta);
+        p.state(1) += noisy_v * dt * std::sin(theta);
+        p.state(2) += noisy_omega * dt;
     }
 }
 
-
-bool WaypointNavNode::loadWaypointsFromYAML(const std::string& filepath) {
-    try {
-        YAML::Node config = YAML::LoadFile(filepath);
-        for (const auto& wp : config["waypoints"]) {
-            geometry_msgs::msg::PoseStamped pose;
-            pose.header.frame_id = "map";
-            pose.pose.position.x = wp["x"].as<double>();
-            pose.pose.position.y = wp["y"].as<double>();
-            pose.pose.orientation.w = 1.0;
-            waypoints_.push_back(pose);
-        }
-        return true;
-    } catch (const std::exception& e) {
-        RCLCPP_ERROR(this->get_logger(), "YAML Ladefehler: %s", e.what());
-        return false;
+void WaypointNavNode::updatePF(double z) {
+    for (auto& p : particles_) {
+        double expected_z = simulateRaycast(p.state);
+        double error = z - expected_z;
+        p.weight = std::exp(-0.5 * error * error / (0.1 * 0.1));
     }
+    double sum_weights = 0.0;
+    for (const auto& p : particles_) sum_weights += p.weight;
+    for (auto& p : particles_) p.weight /= (sum_weights + 1e-6);
+
+    std::vector<Particle> new_particles;
+    std::vector<double> weights;
+    for (const auto& p : particles_) weights.push_back(p.weight);
+    std::discrete_distribution<int> resample(weights.begin(), weights.end());
+    for (int i = 0; i < N_; ++i) new_particles.push_back(particles_[resample(gen_)]);
+    particles_ = new_particles;
+}
+
+void WaypointNavNode::predictKF(double v, double omega, double dt) {
+    double theta = kf_state_(2);
+    Eigen::Vector3d u(v * dt * std::cos(theta), v * dt * std::sin(theta), omega * dt);
+    kf_state_ += u;
+    Eigen::Matrix3d A = Eigen::Matrix3d::Identity();
+    A(0,2) = -v * dt * std::sin(theta);
+    A(1,2) =  v * dt * std::cos(theta);
+    Eigen::Matrix3d Q = 0.01 * Eigen::Matrix3d::Identity();
+    kf_P_ = A * kf_P_ * A.transpose() + Q;
+}
+
+void WaypointNavNode::updateKF(double z) {
+    double H = 1.0, R = 0.1;
+    double y = z - H * kf_state_(0);
+    double S = H * kf_P_(0,0) * H + R;
+    double K = kf_P_(0,0) * H / S;
+    kf_state_(0) += K * y;
+    kf_P_(0,0) = (1 - K * H) * kf_P_(0,0);
+}
+
+void WaypointNavNode::predictEKF(double v, double omega, double dt) {
+    double theta = ekf_state_(2);
+    Eigen::Vector3d u(v * dt * std::cos(theta), v * dt * std::sin(theta), omega * dt);
+    ekf_state_ += u;
+    Eigen::Matrix3d A = Eigen::Matrix3d::Identity();
+    A(0,2) = -v * dt * std::sin(theta);
+    A(1,2) =  v * dt * std::cos(theta);
+    Eigen::Matrix3d Q = 0.01 * Eigen::Matrix3d::Identity();
+    ekf_P_ = A * ekf_P_ * A.transpose() + Q;
+}
+
+void WaypointNavNode::updateEKF(double z) {
+    double H = 1.0, R = 0.1;
+    double y = z - H * ekf_state_(0);
+    double S = H * ekf_P_(0,0) * H + R;
+    double K = ekf_P_(0,0) * H / S;
+    ekf_state_(0) += K * y;
+    ekf_P_(0,0) = (1 - K * H) * ekf_P_(0,0);
 }
 
 void WaypointNavNode::publishPose(const Eigen::Vector3d& state, nav_msgs::msg::Path& path,
@@ -262,107 +259,6 @@ void WaypointNavNode::saveMapImage() {
     cv::imwrite("filter_paths.png", image);
     RCLCPP_INFO(this->get_logger(), "Pfadbild gespeichert als filter_paths.png");
 }
-void WaypointNavNode::predictPF(double v, double omega, double dt) {
-    for (auto& p : particles_) {
-        double theta = p.state(2);
-        double noisy_v = v + motion_noise_(gen_);
-        double noisy_omega = omega + motion_noise_(gen_) * 0.1;
-
-        double dx = noisy_v * dt * std::cos(theta);
-        double dy = noisy_v * dt * std::sin(theta);
-        double dtheta = noisy_omega * dt;
-
-        p.state(0) += dx;
-        p.state(1) += dy;
-        p.state(2) += dtheta;
-    }
-}
-
-
-void WaypointNavNode::predictKF(double v, double omega, double dt) {
-    double theta = kf_state_(2);
-
-    Eigen::Vector3d u;
-    u << v * dt * std::cos(theta),
-         v * dt * std::sin(theta),
-         omega * dt;
-
-    kf_state_ += u;
-
-    Eigen::Matrix3d A = Eigen::Matrix3d::Identity();
-    A(0,2) = -v * dt * std::sin(theta);
-    A(1,2) =  v * dt * std::cos(theta);
-
-    Eigen::Matrix3d Q = 0.01 * Eigen::Matrix3d::Identity();
-    kf_P_ = A * kf_P_ * A.transpose() + Q;
-}
-
-
-void WaypointNavNode::predictEKF(double v, double omega, double dt) {
-    double theta = ekf_state_(2);
-
-    Eigen::Vector3d u;
-    u << v * dt * std::cos(theta),
-         v * dt * std::sin(theta),
-         omega * dt;
-
-    ekf_state_ += u;
-
-    Eigen::Matrix3d A = Eigen::Matrix3d::Identity();
-    A(0,2) = -v * dt * std::sin(theta);
-    A(1,2) =  v * dt * std::cos(theta);
-
-    Eigen::Matrix3d Q = 0.01 * Eigen::Matrix3d::Identity();
-    ekf_P_ = A * ekf_P_ * A.transpose() + Q;
-}
-
-
-void WaypointNavNode::updateKF(double z) {
-    double H = 1.0;
-    double R = 0.1;
-    double y = z - H * kf_state_(0);
-    double S = H * kf_P_(0,0) * H + R;
-    double K = kf_P_(0,0) * H / S;
-    kf_state_(0) += K * y;
-    kf_P_(0,0) = (1 - K * H) * kf_P_(0,0);
-}
-
-
-
-void WaypointNavNode::updateEKF(double z) {
-    double H = 1.0;
-    double R = 0.1;
-    double y = z - H * ekf_state_(0);
-    double S = H * ekf_P_(0,0) * H + R;
-    double K = ekf_P_(0,0) * H / S;
-    ekf_state_(0) += K * y;
-    ekf_P_(0,0) = (1 - K * H) * ekf_P_(0,0);
-}
-
-void WaypointNavNode::updatePF(double z) {
-    // Schritt 1: Gewichtung basierend auf Messfehler
-    for (auto& p : particles_) {
-        double expected_z = p.state(0);  // Vereinfachte Annahme
-        double error = z - expected_z;
-        p.weight = std::exp(-0.5 * error * error / (0.1 * 0.1));
-    }
-
-    // Schritt 2: Normalisieren
-    double sum_weights = 0.0;
-    for (const auto& p : particles_) sum_weights += p.weight;
-    for (auto& p : particles_) p.weight /= (sum_weights + 1e-6);
-
-    // Schritt 3: Resampling
-    std::vector<Particle> new_particles;
-    std::vector<double> weights;
-    for (const auto& p : particles_) weights.push_back(p.weight);
-    std::discrete_distribution<int> resample(weights.begin(), weights.end());
-    for (int i = 0; i < N_; ++i) {
-        new_particles.push_back(particles_[resample(gen_)]);
-    }
-    particles_ = new_particles;
-}
-
 
 int main(int argc, char **argv) {
     rclcpp::init(argc, argv);
