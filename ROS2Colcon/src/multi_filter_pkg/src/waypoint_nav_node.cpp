@@ -333,25 +333,35 @@ double WaypointNavNode::simulateRaycast(const Eigen::Vector3d& state) {
     return state(0) + sensor_noise_(gen_);
 }
 
-void WaypointNavNode::publishPose(const Eigen::Vector3d& state, nav_msgs::msg::Path& path,
-                                  rclcpp::Publisher<nav_msgs::msg::Path>::SharedPtr pub,
-                                  std::ofstream& file, int color) {
-    geometry_msgs::msg::PoseStamped pose;
-    pose.header.frame_id = "map";
-    pose.header.stamp = this->now();
-    pose.pose.position.x = state(0);
-    pose.pose.position.y = state(1);
-    pose.pose.orientation.w = 1.0;
-    path.poses.push_back(pose);
-    path.header.stamp = this->now();
-    pub->publish(path);
-    file << state(0) << "," << state(1) << "\n";
-    int x = static_cast<int>((state(0) - map_.info.origin.position.x) / map_.info.resolution);
-    int y = static_cast<int>((state(1) - map_.info.origin.position.y) / map_.info.resolution);
-    if (x >= 0 && y >= 0 && x < static_cast<int>(map_.info.width) && y < static_cast<int>(map_.info.height)) {
-        map_.data[y * map_.info.width + x] = color;
+double WaypointNavNode::simulateRaycast(const Eigen::Vector3d& state) {
+    double x0 = (state(0) - map_.info.origin.position.x) / map_.info.resolution;
+    double y0 = (state(1) - map_.info.origin.position.y) / map_.info.resolution;
+    double theta = state(2);
+
+    cv::Point start(static_cast<int>(x0), static_cast<int>(y0));
+    double range_max = 5.0;  // max LiDAR range
+    double step = map_.info.resolution;
+    double ray_length = 0.0;
+
+    for (double r = 0.0; r < range_max; r += step) {
+        double x = state(0) + r * std::cos(theta);
+        double y = state(1) + r * std::sin(theta);
+
+        int mx = static_cast<int>((x - map_.info.origin.position.x) / map_.info.resolution);
+        int my = static_cast<int>((y - map_.info.origin.position.y) / map_.info.resolution);
+
+        if (mx < 0 || my < 0 || mx >= static_cast<int>(map_.info.width) || my >= static_cast<int>(map_.info.height))
+            break;
+
+        int value = map_.data[my * map_.info.width + mx];
+        if (value > 50) break;  // Belegung erkannt
+
+        ray_length = r;
     }
+
+    return ray_length;
 }
+
 
 void WaypointNavNode::saveMapImage() {
     cv::Mat image(map_.info.height, map_.info.width, CV_8UC1);
