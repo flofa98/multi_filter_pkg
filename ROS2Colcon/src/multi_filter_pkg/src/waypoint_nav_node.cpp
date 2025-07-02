@@ -48,9 +48,12 @@ private:
     void predictPF(double v, double omega, double dt);
     void predictKF(double v, double omega, double dt);
     void predictEKF(double v, double omega, double dt);
-    void updateKF(double z);
-    void updateEKF(double z);
-    void updatePF(double z);
+    void updateKF(const Eigen::Vector3d& z);
+    void updateEKF(const Eigen::Vector3d& z);
+    void updatePF(const Eigen::Vector3d& z);
+
+    rclcpp::Subscription<geometry_msgs::msg::PoseWithCovarianceStamped>::SharedPtr amcl_pose_sub_;
+
     double simulateRaycast(const Eigen::Vector3d& state);
 
     rclcpp::Subscription<sensor_msgs::msg::LaserScan>::SharedPtr scan_sub_;
@@ -195,6 +198,30 @@ WaypointNavNode::WaypointNavNode() : Node("waypoint_nav_node"), current_goal_idx
         this->last_scan_ = *msg;
         this->got_scan_ = true;
     });
+    amcl_pose_sub_ = this->create_subscription<geometry_msgs::msg::PoseWithCovarianceStamped>(
+    "/amcl_pose", 10,
+    [this](const geometry_msgs::msg::PoseWithCovarianceStamped::SharedPtr msg) {
+        double x = msg->pose.pose.position.x;
+        double y = msg->pose.pose.position.y;
+
+        tf2::Quaternion q(
+            msg->pose.pose.orientation.x,
+            msg->pose.pose.orientation.y,
+            msg->pose.pose.orientation.z,
+            msg->pose.pose.orientation.w);
+        double roll, pitch, yaw;
+        tf2::Matrix3x3(q).getRPY(roll, pitch, yaw);
+
+        Eigen::Vector3d z(x, y, yaw);
+
+        // Update Filter mit AMCL-Messung (Pose x,y,yaw)
+        updatePF(z);
+        updateKF(z);
+        updateEKF(z);
+
+        RCLCPP_DEBUG(this->get_logger(), "AMCL Pose empfangen: x=%.2f, y=%.2f, yaw=%.2f", x, y, yaw);
+    });
+
 
 
 
@@ -253,11 +280,11 @@ void WaypointNavNode::cmdVelCallback(const geometry_msgs::msg::Twist::SharedPtr 
         double omega = last_omega_;
 
         predictPF(v, omega, dt);
-        updatePF(simulateRaycast(particles_[0].state));
+       
         predictKF(v, omega, dt);
-        updateKF(simulateRaycast(kf_state_));
+        
         predictEKF(v, omega, dt);
-        updateEKF(simulateRaycast(ekf_state_));
+     
 
         Eigen::Vector3d pf_est = Eigen::Vector3d::Zero();
         for (const auto& p : particles_) pf_est += p.state;
@@ -325,36 +352,55 @@ void WaypointNavNode::predictEKF(double v, double omega, double dt) {
     ekf_P_ = A * ekf_P_ * A.transpose() + Q;
 }
 
-void WaypointNavNode::updateKF(double z) {
-    double H = 1.0;
-    double R = 0.1;
-    double y = z - H * kf_state_(0);
-    double S = H * kf_P_(0,0) * H + R;
-    double K = kf_P_(0,0) * H / S;
-    kf_state_(0) += K * y;
-    kf_P_(0,0) *= (1 - K * H);
+void WaypointNavNode::updateKF(const Eigen::Vector3d& z) {
+    // Messmatrix H (Identität 3x3 für Direktmessung von x,y,yaw)
+    Eigen::Matrix3d H = Eigen::Matrix3d::Identity();
+    Eigen::Matrix3d R = 0.1 * Eigen::Matrix3d::Identity();  // Messrauschen
+
+    Eigen::Vector3d y = z - H * kf_state_;  // Innovation
+    // Winkel normalisieren (yaw)
+    while (y(2) > M_PI) y(2) -= 2 * M_PI;
+    while (y(2) < -M_PI) y(2) += 2 * M_PI;
+
+    Eigen::Matrix3d S = H * kf_P_ * H.transpose() + R;
+    Eigen::Matrix3d K = kf_P_ * H.transpose() * S.inverse();
+
+    kf_state_ = kf_state_ + K * y;
+    kf_P_ = (Eigen::Matrix3d::Identity() - K * H) * kf_P_;
 }
 
-void WaypointNavNode::updateEKF(double z) {
-    double H = 1.0;
-    double R = 0.1;
-    double y = z - H * ekf_state_(0);
-    double S = H * ekf_P_(0,0) * H + R;
-    double K = ekf_P_(0,0) * H / S;
-    ekf_state_(0) += K * y;
-    ekf_P_(0,0) *= (1 - K * H);
+void WaypointNavNode::updateEKF(const Eigen::Vector3d& z) {
+    // Messfunktion h(x) = Identität
+    Eigen::Matrix3d H = Eigen::Matrix3d::Identity();
+    Eigen::Matrix3d R = 0.1 * Eigen::Matrix3d::Identity();
+
+    Eigen::Vector3d y = z - H * ekf_state_;
+    // Winkel normalisieren
+    while (y(2) > M_PI) y(2) -= 2 * M_PI;
+    while (y(2) < -M_PI) y(2) += 2 * M_PI;
+
+    Eigen::Matrix3d S = H * ekf_P_ * H.transpose() + R;
+    Eigen::Matrix3d K = ekf_P_ * H.transpose() * S.inverse();
+
+    ekf_state_ = ekf_state_ + K * y;
+    ekf_P_ = (Eigen::Matrix3d::Identity() - K * H) * ekf_P_;
 }
 
-void WaypointNavNode::updatePF(double z) {
+void WaypointNavNode::updatePF(const Eigen::Vector3d& z) {
     double sum_weights = 0.0;
     for (auto& p : particles_) {
-        double error = z - p.state(0);
+        Eigen::Vector3d diff = z - p.state;
+        // Winkeldifferenz normalisieren
+        while (diff(2) > M_PI) diff(2) -= 2 * M_PI;
+        while (diff(2) < -M_PI) diff(2) += 2 * M_PI;
+
+        double error = diff.norm();
         p.weight = std::exp(-0.5 * error * error / (0.1 * 0.1));
         sum_weights += p.weight;
     }
     for (auto& p : particles_) p.weight /= (sum_weights + 1e-6);
 
-    // Gewichte extrahieren
+    // Resampling
     std::vector<double> weights;
     for (const auto& p : particles_) weights.push_back(p.weight);
 
@@ -365,6 +411,7 @@ void WaypointNavNode::updatePF(double z) {
 
     particles_ = new_particles;
 }
+
 
 
 
