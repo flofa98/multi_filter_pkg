@@ -53,6 +53,9 @@ private:
     double simulateRaycast(const Eigen::Vector3d& state);
 
     rclcpp::Subscription<sensor_msgs::msg::LaserScan>::SharedPtr scan_sub_;
+    sensor_msgs::msg::LaserScan last_scan_;
+    bool got_scan_ = false;
+
 
 
     rclcpp_action::Client<NavigateToPose>::SharedPtr client_;
