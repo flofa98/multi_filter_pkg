@@ -20,6 +20,8 @@ find_package(Eigen3 REQUIRED)
 find_package(yaml-cpp REQUIRED)
 find_package(ament_index_cpp REQUIRED)
 find_package(OpenCV REQUIRED)
+find_package(nav2_map_server REQUIRED)
+
 
 # Executable
 add_executable(waypoint_nav_node src/waypoint_nav_node.cpp)
@@ -38,6 +40,7 @@ ament_target_dependencies(waypoint_nav_node
   yaml-cpp
   ament_index_cpp
   OpenCV
+  nav2_map_server
 )
 
 # OpenCV und yaml-cpp einbinden (Link Libraries)
