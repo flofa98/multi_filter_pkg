@@ -1,6 +1,7 @@
 #include <rclcpp/rclcpp.hpp>
 #include <rclcpp_action/rclcpp_action.hpp>
 #include <nav2_msgs/action/navigate_to_pose.hpp>
+#include <nav2_map_server/map_io.hpp>
 #include <geometry_msgs/msg/pose_stamped.hpp>
 #include <nav_msgs/msg/odometry.hpp>
 #include <geometry_msgs/msg/twist.hpp>
@@ -97,6 +98,15 @@ private:
 WaypointNavNode::WaypointNavNode() : Node("waypoint_nav_node"), current_goal_idx_(0) {
     client_ = rclcpp_action::create_client<NavigateToPose>(this, "navigate_to_pose");
     std::string pkg_path = ament_index_cpp::get_package_share_directory("multi_filter_pkg");
+    std::string map_yaml_path = pkg_path + "/maps/map.yaml";
+        try {
+                nav2_map_server::loadMapFromYaml(map_yaml_path, map_);
+                RCLCPP_INFO(this->get_logger(), "Karte erfolgreich geladen: %s", map_yaml_path.c_str());
+            } catch (const std::exception& e)
+            {
+                RCLCPP_ERROR(this->get_logger(), "Fehler beim Laden der Karte: %s", e.what());
+            }
+
     std::string yaml_path = pkg_path + "/config/waypoints.yaml";
     if (!loadWaypointsFromYAML(yaml_path)) {
         RCLCPP_ERROR(this->get_logger(), "Fehler beim Laden der Waypoints.");
