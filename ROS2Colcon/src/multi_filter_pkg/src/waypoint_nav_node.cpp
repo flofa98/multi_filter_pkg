@@ -65,6 +65,11 @@ private:
     nav_msgs::msg::OccupancyGrid map_;
     std::ofstream file_pf_, file_kf_, file_ekf_;
 
+    rclcpp::Subscription<nav_msgs::msg::Path>::SharedPtr nav2_plan_sub_;
+    nav_msgs::msg::Path nav2_full_path_;
+    std::ofstream file_nav2_;
+
+
     std::vector<Particle> particles_;
     const int N_ = 100;
 
@@ -152,6 +157,22 @@ WaypointNavNode::WaypointNavNode() : Node("waypoint_nav_node"), current_goal_idx
 
     kf_P_ = ekf_P_ = Eigen::Matrix3d::Identity();
     particles_.resize(N_);  // Platz reservieren
+
+    nav2_plan_sub_ = this->create_subscription<nav_msgs::msg::Path>(
+    "/plan", 10,
+    [this](const nav_msgs::msg::Path::SharedPtr msg) {
+        if (!msg->poses.empty()) {
+            for (const auto& pose : msg->poses) {
+                nav2_full_path_.poses.push_back(pose);
+                if (file_nav2_.is_open())
+                    file_nav2_ << pose.pose.position.x << "," << pose.pose.position.y << "\n";
+            }
+        }
+    });
+
+    nav2_full_path_.header.frame_id = "map";
+    file_nav2_.open("nav2_path.csv");
+
 
     }
 
@@ -320,6 +341,14 @@ void WaypointNavNode::saveMapImage() {
     cv::Mat image(map_.info.height, map_.info.width, CV_8UC1);
     for (size_t i = 0; i < map_.data.size(); ++i)
         image.data[i] = static_cast<uint8_t>(map_.data[i]);
+    for (const auto& pose : nav2_full_path_.poses) {
+    int x = static_cast<int>((pose.pose.position.x - map_.info.origin.position.x) / map_.info.resolution);
+    int y = static_cast<int>((pose.pose.position.y - map_.info.origin.position.y) / map_.info.resolution);
+    if (x >= 0 && y >= 0 && x < static_cast<int>(map_.info.width) && y < static_cast<int>(map_.info.height)) {
+        image.at<uchar>(y, x) = 50;  // z. B. dunklerer Grauwert für Nav2
+    }
+}
+
     cv::imwrite("filter_paths.png", image);
     RCLCPP_INFO(this->get_logger(), "Pfadbild gespeichert als filter_paths.png");
 }
