@@ -151,9 +151,9 @@ WaypointNavNode::WaypointNavNode() : Node("waypoint_nav_node"), current_goal_idx
     map_.data.resize(map_.info.width * map_.info.height, 0);
 
     kf_P_ = ekf_P_ = Eigen::Matrix3d::Identity();
-    kf_state_ = ekf_state_ = Eigen::Vector3d(0, 0, 0);
-    particles_.resize(N_, Particle{Eigen::Vector3d(0, 0, 0), 1.0 / N_});
-}
+    particles_.resize(N_);  // Platz reservieren
+
+    }
 
 void WaypointNavNode::sendNextGoal() {
     if (!client_->wait_for_action_server(5s)) return;
