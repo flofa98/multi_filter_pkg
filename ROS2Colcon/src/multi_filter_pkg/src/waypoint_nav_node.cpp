@@ -109,10 +109,11 @@ WaypointNavNode::WaypointNavNode() : Node("waypoint_nav_node"), current_goal_idx
 
     // Filter mit Groundtruth aus tf initialisieren
     geometry_msgs::msg::TransformStamped transformStamped;
-    try {
-        transformStamped = tf_buffer_->lookupTransform("map", "base_link", tf2::TimePointZero);
-        double x = transformStamped.transform.translation.x;
-        double y = transformStamped.transform.translation.y;
+    if (tf_buffer_->canTransform("map", "base_link", tf2::TimePointZero, tf2::durationFromSec(3.0))) {
+    transformStamped = tf_buffer_->lookupTransform("map", "base_link", tf2::TimePointZero);
+
+    double x = transformStamped.transform.translation.x;
+    double y = transformStamped.transform.translation.y;
 
     tf2::Quaternion q(
         transformStamped.transform.rotation.x,
@@ -123,16 +124,15 @@ WaypointNavNode::WaypointNavNode() : Node("waypoint_nav_node"), current_goal_idx
     tf2::Matrix3x3(q).getRPY(roll, pitch, yaw);
 
     Eigen::Vector3d start_pose(x, y, yaw);
-
     kf_state_ = ekf_state_ = start_pose;
     for (auto& p : particles_)
         p.state = start_pose;
 
-    RCLCPP_INFO(this->get_logger(), "Filter mit tf-Pose initialisiert: x=%.2f y=%.2f yaw=%.2f", x, y, yaw);
-
-} catch (const tf2::TransformException& ex) {
-    RCLCPP_WARN(this->get_logger(), "Kein tf-Transform gefunden: %s", ex.what());
+    RCLCPP_INFO(this->get_logger(), "Filter initialisiert: x=%.2f y=%.2f yaw=%.2f", x, y, yaw);
+} else {
+    RCLCPP_WARN(this->get_logger(), "map → base_link nicht verfügbar nach 3 Sekunden");
 }
+
 
 
     timer_ = this->create_wall_timer(1s, std::bind(&WaypointNavNode::sendNextGoal, this));
