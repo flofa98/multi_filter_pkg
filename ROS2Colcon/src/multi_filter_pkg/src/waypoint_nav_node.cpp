@@ -194,6 +194,8 @@ void WaypointNavNode::sendNextGoal() {
 
 void WaypointNavNode::cmdVelCallback(const geometry_msgs::msg::Twist::SharedPtr msg) {
     if (got_cmd_) {
+        RCLCPP_INFO(this->get_logger(), "cmd_vel empfangen: linear=%.2f angular=%.2f", msg->linear.x, msg->angular.z);
+
         double dt = (this->now() - last_cmd_time_).seconds();
         double v = last_v_;
         double omega = last_omega_;
