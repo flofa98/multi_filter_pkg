@@ -52,6 +52,9 @@ private:
     void updatePF(double z);
     double simulateRaycast(const Eigen::Vector3d& state);
 
+    rclcpp::Subscription<sensor_msgs::msg::LaserScan>::SharedPtr scan_sub_;
+
+
     rclcpp_action::Client<NavigateToPose>::SharedPtr client_;
     std::vector<geometry_msgs::msg::PoseStamped> waypoints_;
     size_t current_goal_idx_;
@@ -172,6 +175,14 @@ WaypointNavNode::WaypointNavNode() : Node("waypoint_nav_node"), current_goal_idx
 
     nav2_full_path_.header.frame_id = "map";
     file_nav2_.open("nav2_path.csv");
+
+    scan_sub_ = this->create_subscription<sensor_msgs::msg::LaserScan>(
+    "/scan", 10,
+    [this](const sensor_msgs::msg::LaserScan::SharedPtr msg) {
+        this->last_scan_ = *msg;
+        this->got_scan_ = true;
+    });
+
 
 
     }
