@@ -200,6 +200,34 @@ WaypointNavNode::WaypointNavNode() : Node("waypoint_nav_node"), current_goal_idx
 
     }
 
+void WaypointNavNode::publishPose(const Eigen::Vector3d& state,
+                                 nav_msgs::msg::Path& path,
+                                 rclcpp::Publisher<nav_msgs::msg::Path>::SharedPtr pub,
+                                 std::ofstream& file,
+                                 int color)
+{
+    geometry_msgs::msg::PoseStamped pose;
+    pose.header.frame_id = "map";
+    pose.header.stamp = this->now();
+    pose.pose.position.x = state(0);
+    pose.pose.position.y = state(1);
+    pose.pose.orientation.w = 1.0; // einfache Orientierung
+
+    path.poses.push_back(pose);
+    path.header.stamp = this->now();
+
+    pub->publish(path);
+
+    file << state(0) << "," << state(1) << "\n";
+
+    int x = static_cast<int>((state(0) - map_.info.origin.position.x) / map_.info.resolution);
+    int y = static_cast<int>((state(1) - map_.info.origin.position.y) / map_.info.resolution);
+    if (x >= 0 && y >= 0 && x < static_cast<int>(map_.info.width) && y < static_cast<int>(map_.info.height)) {
+        map_.data[y * map_.info.width + x] = color;
+    }
+}
+
+
 void WaypointNavNode::sendNextGoal() {
     if (!client_->wait_for_action_server(5s)) return;
     if (current_goal_idx_ >= waypoints_.size()) {
