@@ -104,6 +104,37 @@ WaypointNavNode::WaypointNavNode() : Node("waypoint_nav_node"), current_goal_idx
     tf_buffer_ = std::make_unique<tf2_ros::Buffer>(this->get_clock());
     tf_listener_ = std::make_shared<tf2_ros::TransformListener>(*tf_buffer_);
 
+    // Warte kurz auf tf-Frames
+    rclcpp::sleep_for(500ms);
+
+    // Filter mit Groundtruth aus tf initialisieren
+    geometry_msgs::msg::TransformStamped transformStamped;
+    try {
+        transformStamped = tf_buffer_->lookupTransform("map", "base_link", tf2::TimePointZero);
+        double x = transformStamped.transform.translation.x;
+        double y = transformStamped.transform.translation.y;
+
+    tf2::Quaternion q(
+        transformStamped.transform.rotation.x,
+        transformStamped.transform.rotation.y,
+        transformStamped.transform.rotation.z,
+        transformStamped.transform.rotation.w);
+    double roll, pitch, yaw;
+    tf2::Matrix3x3(q).getRPY(roll, pitch, yaw);
+
+    Eigen::Vector3d start_pose(x, y, yaw);
+
+    kf_state_ = ekf_state_ = start_pose;
+    for (auto& p : particles_)
+        p.state = start_pose;
+
+    RCLCPP_INFO(this->get_logger(), "Filter mit tf-Pose initialisiert: x=%.2f y=%.2f yaw=%.2f", x, y, yaw);
+
+} catch (const tf2::TransformException& ex) {
+    RCLCPP_WARN(this->get_logger(), "Kein tf-Transform gefunden: %s", ex.what());
+}
+
+
     timer_ = this->create_wall_timer(1s, std::bind(&WaypointNavNode::sendNextGoal, this));
 
     path_pf_.header.frame_id = path_kf_.header.frame_id = path_ekf_.header.frame_id = "map";
