@@ -329,9 +329,6 @@ void WaypointNavNode::updatePF(double z) {
 }
 
 
-double WaypointNavNode::simulateRaycast(const Eigen::Vector3d& state) {
-    return state(0) + sensor_noise_(gen_);
-}
 
 double WaypointNavNode::simulateRaycast(const Eigen::Vector3d& state) {
     double x0 = (state(0) - map_.info.origin.position.x) / map_.info.resolution;
