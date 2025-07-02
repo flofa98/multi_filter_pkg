@@ -127,6 +127,7 @@ WaypointNavNode::WaypointNavNode() : Node("waypoint_nav_node"), current_goal_idx
 
     tf_buffer_ = std::make_unique<tf2_ros::Buffer>(this->get_clock());
     tf_listener_ = std::make_shared<tf2_ros::TransformListener>(*tf_buffer_);
+    particles_.resize(N_);  // Platz reservieren
 
     // Warte kurz auf tf-Frames
     rclcpp::sleep_for(500ms);
@@ -175,7 +176,7 @@ WaypointNavNode::WaypointNavNode() : Node("waypoint_nav_node"), current_goal_idx
     map_.data.resize(map_.info.width * map_.info.height, 0);
 
     kf_P_ = ekf_P_ = Eigen::Matrix3d::Identity();
-    particles_.resize(N_);  // Platz reservieren
+  
 
     nav2_plan_sub_ = this->create_subscription<nav_msgs::msg::Path>(
     "/plan", 10,
