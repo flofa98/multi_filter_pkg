@@ -57,6 +57,7 @@ install(TARGETS
 
 install(DIRECTORY
   config
+  maps
   DESTINATION share/${PROJECT_NAME}
 )
 
