@@ -3,6 +3,7 @@
 #include <nav2_msgs/action/navigate_to_pose.hpp>
 #include <nav2_map_server/map_io.hpp>
 #include <geometry_msgs/msg/pose_stamped.hpp>
+#include <geometry_msgs/msg/pose_with_covariance_stamped.hpp>
 #include <nav_msgs/msg/odometry.hpp>
 #include <geometry_msgs/msg/twist.hpp>
 #include <ament_index_cpp/get_package_share_directory.hpp>
