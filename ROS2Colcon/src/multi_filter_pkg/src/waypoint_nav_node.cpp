@@ -54,6 +54,8 @@ private:
     void updatePF(const Eigen::Vector3d& z);
     double imu_yaw_ = 0.0;
     bool got_imu_ = false;
+    bool goal_active_ = false;
+
 
 
     
@@ -337,20 +339,27 @@ void WaypointNavNode::publishPose(const Eigen::Vector3d& state,
 
 
 void WaypointNavNode::sendNextGoal() {
+    if (goal_active_) return;  // Noch unterwegs
     if (!client_->wait_for_action_server(5s)) return;
     if (current_goal_idx_ >= waypoints_.size()) {
         saveMapImage();
         rclcpp::shutdown();
         return;
     }
+
     auto goal_msg = NavigateToPose::Goal();
     goal_msg.pose = waypoints_[current_goal_idx_];
+
     rclcpp_action::Client<NavigateToPose>::SendGoalOptions options;
     options.result_callback = [this](auto result) {
+        goal_active_ = false;
         current_goal_idx_++;
     };
+
+    goal_active_ = true;
     client_->async_send_goal(goal_msg, options);
 }
+
 
 
 bool WaypointNavNode::loadWaypointsFromYAML(const std::string& filepath) {
