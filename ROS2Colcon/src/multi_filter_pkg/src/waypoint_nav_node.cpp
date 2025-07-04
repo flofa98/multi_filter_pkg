@@ -69,6 +69,8 @@ private:
 
     rclcpp::Subscription<sensor_msgs::msg::Imu>::SharedPtr imu_sub_;
     rclcpp::Subscription<sensor_msgs::msg::JointState>::SharedPtr joint_sub_;
+    rclcpp::Subscription<geometry_msgs::msg::PoseWithCovarianceStamped>::SharedPtr nav2_pose_sub_;
+
 
     double wheel_radius_ = 0.033;       //TurtleBot3
     double wheel_separation_ = 0.16;
@@ -283,20 +285,20 @@ imu_sub_ = this->create_subscription<sensor_msgs::msg::Imu>(
     kf_P_ = ekf_P_ = Eigen::Matrix3d::Identity();
   
 
-    nav2_plan_sub_ = this->create_subscription<nav_msgs::msg::Path>(
-    "/plan", 10,
-    [this](const nav_msgs::msg::Path::SharedPtr msg) {
-        if (!msg->poses.empty()) {
-            for (const auto& pose : msg->poses) {
-                nav2_full_path_.poses.push_back(pose);
-                if (file_nav2_.is_open())
-                    file_nav2_ << pose.pose.position.x << "," << pose.pose.position.y << "\n";
-            }
-        }
+nav2_pose_sub_ = this->create_subscription<geometry_msgs::msg::PoseWithCovarianceStamped>(
+    "/amcl_pose", 10,
+    [this](const geometry_msgs::msg::PoseWithCovarianceStamped::SharedPtr msg) {
+        geometry_msgs::msg::PoseStamped pose;
+        pose.header = msg->header;
+        pose.pose = msg->pose.pose;
+
+        nav2_full_path_.poses.push_back(pose);
+        nav2_full_path_.header.stamp = this->now();
+
+        if (file_nav2_.is_open())
+            file_nav2_ << pose.pose.position.x << "," << pose.pose.position.y << "\n";
     });
 
-    nav2_full_path_.header.frame_id = "map";
-    file_nav2_.open("nav2_path.csv");
 
     scan_sub_ = this->create_subscription<sensor_msgs::msg::LaserScan>(
     "/scan", 10,
