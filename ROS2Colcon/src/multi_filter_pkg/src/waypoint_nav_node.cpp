@@ -169,8 +169,22 @@ WaypointNavNode::WaypointNavNode() : Node("waypoint_nav_node"), current_goal_idx
 
     Eigen::Vector3d start_pose(x, y, yaw);
     kf_state_ = ekf_state_ = start_pose;
-    for (auto& p : particles_)
-        p.state = start_pose;
+    std::normal_distribution<double> init_noise_pos(0.0, 0.05);   // Position ±5 cm
+    std::normal_distribution<double> init_noise_yaw(0.0, 0.1);    // Yaw ±0.1 rad (~5.7°)
+
+        for (auto& p : particles_) {
+            double noisy_x = x + init_noise_pos(gen_);
+            double noisy_y = y + init_noise_pos(gen_);
+            double noisy_yaw = yaw + init_noise_yaw(gen_);
+
+            // Yaw normalisieren
+            while (noisy_yaw > M_PI) noisy_yaw -= 2 * M_PI;
+            while (noisy_yaw < -M_PI) noisy_yaw += 2 * M_PI;
+
+            p.state = Eigen::Vector3d(noisy_x, noisy_y, noisy_yaw);
+            p.weight = 1.0 / static_cast<double>(N_);
+        }
+
 
     RCLCPP_INFO(this->get_logger(), "Filter initialisiert: x=%.2f y=%.2f yaw=%.2f", x, y, yaw);
 } else {
