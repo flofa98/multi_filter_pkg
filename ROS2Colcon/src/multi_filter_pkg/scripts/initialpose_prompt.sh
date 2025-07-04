@@ -1,11 +1,21 @@
 #!/bin/bash
 
-# Verzeichnis dieses Skripts ermitteln (egal von wo gestartet)
-SCRIPT_DIR="$( cd "$( dirname "${BASH_SOURCE[0]}" )" && pwd )"
+# Absoluter Pfad zu diesem Skript (auch bei ros2 launch korrekt)
+SCRIPT_PATH="$(realpath "${BASH_SOURCE[0]}")"
+SCRIPT_DIR="$(dirname "$SCRIPT_PATH")"
 
-# Install-Ordner relativ dazu
-SETUP_PATH="${SCRIPT_DIR}/../../install/setup.bash"
+# Projekt-Wurzel ermitteln (zwei Ebenen hoch von scripts/)
+PROJECT_ROOT="$(realpath "${SCRIPT_DIR}/../../..")"
 
+# Setup-Skript
+SETUP_PATH="${PROJECT_ROOT}/install/setup.bash"
+
+# Debug-Ausgabe (optional)
+echo "SCRIPT_DIR     = $SCRIPT_DIR"
+echo "PROJECT_ROOT   = $PROJECT_ROOT"
+echo "Sourcing setup = $SETUP_PATH"
+
+# Benutzerabfrage
 echo ""
 echo "⚠️  Bitte setzen Sie die Initialpose in RViz."
 read -p "➡️  Weiter mit [Y/n]: " confirm
@@ -15,7 +25,9 @@ if [[ "$confirm" == "n" || "$confirm" == "N" ]]; then
   exit 0
 fi
 
+# Node im neuen Terminal starten
 echo "✅ Initialpose bestätigt – starte waypoint_follower..."
 
-gnome-terminal -- bash -c "source ${SETUP_PATH} && ros2 run multi_filter_pkg waypoint_follower; exec bash"
+gnome-terminal -- bash -c "source '${SETUP_PATH}' && ros2 run multi_filter_pkg waypoint_follower; exec bash"
+
 
