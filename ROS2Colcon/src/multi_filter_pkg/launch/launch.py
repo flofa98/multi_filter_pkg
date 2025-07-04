@@ -7,6 +7,7 @@ import os
 def generate_launch_description():
     pkg_dir = get_package_share_directory('multi_filter_pkg')
 
+    # 1. Nav2-Launch starten
     nav2_launch = IncludeLaunchDescription(
         PythonLaunchDescriptionSource(
             os.path.join(get_package_share_directory('nav2_bringup'), 'launch', 'tb3_simulation_launch.py')
@@ -14,15 +15,17 @@ def generate_launch_description():
         launch_arguments={'headless': 'False'}.items()
     )
 
-    prompt = ExecuteProcess(
-        cmd=[os.path.join(pkg_dir, 'scripts', 'initialpose_prompt.sh')],
-        shell=True,
-        output='screen'
+    # 2. In neuem Terminal das Bash-Skript mit Benutzerabfrage öffnen
+    initialpose_prompt = ExecuteProcess(
+        cmd=[
+            'gnome-terminal', '--', 'bash', '-c',
+            os.path.join(pkg_dir, 'scripts', 'initialpose_prompt.sh') + '; exec bash'
+        ],
+        shell=False
     )
 
     return LaunchDescription([
         nav2_launch,
-        prompt
+        initialpose_prompt
     ])
-
 
