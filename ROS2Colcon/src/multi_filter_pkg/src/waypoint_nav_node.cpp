@@ -274,6 +274,8 @@ imu_sub_ = this->create_subscription<sensor_msgs::msg::Imu>(
     file_pf_.open("pf_path.csv");
     file_kf_.open("kf_path.csv");
     file_ekf_.open("ekf_path.csv");
+    file_nav2_.open("nav2_path.csv");
+
 
     map_.header.frame_id = "map";
     map_.info.resolution = 0.05;
