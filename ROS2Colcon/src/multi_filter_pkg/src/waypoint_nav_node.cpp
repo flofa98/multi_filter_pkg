@@ -102,7 +102,7 @@ private:
 
 
     std::vector<Particle> particles_;
-    const int N_ = 100;
+    const int N_ = 500;
 
     Eigen::Vector3d kf_state_, ekf_state_;
     Eigen::Matrix3d kf_P_, ekf_P_;
