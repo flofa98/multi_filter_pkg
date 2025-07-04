@@ -1,37 +1,31 @@
 from launch import LaunchDescription
-from launch.actions import DeclareLaunchArgument, IncludeLaunchDescription
-from launch.conditions import IfCondition
-from launch.substitutions import LaunchConfiguration
+from launch.actions import IncludeLaunchDescription
 from launch.launch_description_sources import PythonLaunchDescriptionSource
 from launch_ros.actions import Node
+from ament_index_python.packages import get_package_share_directory
 import os
 
 def generate_launch_description():
-    use_prompt = LaunchConfiguration('use_initialpose_prompt')
+    nav2_launch = IncludeLaunchDescription(
+        PythonLaunchDescriptionSource(
+            os.path.join(
+                get_package_share_directory('nav2_bringup'),
+                'launch',
+                'tb3_simulation_launch.py'
+            )
+        ),
+        launch_arguments={'headless': 'False'}.items()
+    )
+
+    prompt_node = Node(
+        package='multi_filter_pkg',
+        executable='initialpose_prompt_node',
+        name='initialpose_prompt_node',
+        output='screen'
+    )
 
     return LaunchDescription([
-        DeclareLaunchArgument(
-            'use_initialpose_prompt',
-            default_value='true',
-            description='GUI-Fenster zur Initialpose anzeigen?'
-        ),
-
-        IncludeLaunchDescription(
-            PythonLaunchDescriptionSource(
-                os.path.join(
-                    get_package_share_directory('nav2_bringup'),
-                    'launch',
-                    'tb3_simulation_launch.py'
-                )
-            ),
-            launch_arguments={'headless': 'False'}.items()
-        ),
-
-        Node(
-            package='initialpose_gui',
-            executable='initialpose_prompt_node',
-            name='initialpose_prompt_node',
-            output='screen',
-            condition=IfCondition(use_prompt)
-        )
+        nav2_launch,
+        prompt_node
     ])
+
