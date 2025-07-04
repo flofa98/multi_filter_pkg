@@ -1,61 +1,65 @@
-## 🧭 ROS 2 Waypoint Navigation mit Nav2 und TurtleBot3
+## 🛠️ Anleitung: Start des ROS 2 Projekts mit Navigation und Initialpose
 
+### 1. Repository clonen oder bereits im Projektverzeichnis sein
 
-### Voraussetzungen
-
-* ROS 2 installiert (z. B. ROS 2 Jazzy)
-* TurtleBot3-Pakete installiert
-* Nav2 installiert
-* Das Projekt mit der Datei `waypoint_nav_node.cpp` ist als Paket `multi_filter_pkg` eingebunden
-* Gazebo ist korrekt konfiguriert
-
----
-
-### 🔧 1. Simulation und Nav2 starten
-
-Starte die TurtleBot3-Simulation mit aktivem Nav2-Stack und RViz:
+Beispiel:
 
 ```bash
-ros2 launch nav2_bringup tb3_simulation_launch.py headless:=False
+cd ~/multi_filter_pkg/ROS2Colcon
 ```
 
-* Dadurch wird eine Gazebo-Welt geladen
-* Nav2 (inkl. AMCL, BT Navigator etc.) wird gestartet
-* RViz öffnet sich automatisch zur Visualisierung
-
 ---
 
-### 📍 2. Initialpose setzen
-
-In RViz:
-
-1. Wähle das Tool **2D Pose Estimate** (Pfeilsymbol mit "Initial Pose") aus der oberen Leiste
-2. Klicke in der Karte auf die ungefähre Startposition des Roboters und ziehe den Pfeil in Fahrtrichtung
-
-Dies setzt die Anfangsposition des Roboters für den AMCL-Algorithmus zur Lokalisierung. Ohne diese Angabe kann Nav2 keine Navigation starten.
-
----
-
-### 🚗 3. Waypoint-Navigation starten
-
-Starte nun die Node für die automatische Navigation zu Wegpunkten:
+### 2. Build des Projekts mit `colcon`
 
 ```bash
-ros2 run multi_filter_pkg waypoint_nav_node
+colcon build --symlink-install
 ```
 
-Diese Node:
+---
 
-* Liest die Wegpunkte aus einer YAML-Datei
-* Sendet Navigationsziele über die `NavigateToPose`-Action an Nav2
-* Beobachtet den Status der Ziele und wechselt zum nächsten Wegpunkt, sobald ein Ziel erreicht ist
+### 3. `setup.bash` sourcen (einmalig im Terminal):
+
+```bash
+source install/setup.bash
+```
 
 ---
 
-### ✅ Hinweise
+### 4. `launch.sh` ausführbar machen (nur einmal nötig, z. B. nach dem Clonen):
 
-* Achte darauf, dass `waypoint_nav_node` erst **nach dem Setzen der Initialpose** gestartet wird.
-* Die Wegpunkt-YAML-Datei sollte sich im Paket befinden und korrekt referenziert sein.
-* Bei Problemen mit der Navigation überprüfe die TF-Frames (`tf2_tools`, `ros2 run tf2_tools view_frames`) und das Logging in der Konsole.
+```bash
+chmod +x src/multi_filter_pkg/scripts/launch.sh
+```
 
 ---
+
+### 5. Launch-Skript starten:
+
+```bash
+./src/multi_filter_pkg/scripts/launch.sh
+```
+
+Dieses Skript erledigt Folgendes:
+
+1. Startet **Nav2 und RViz** im Hintergrund.
+2. **Hinweis:** Es dauert **einige Sekunden**, bis RViz vollständig geladen ist und der Roboter erscheint.
+3. Sobald du die Initialpose in RViz gesetzt hast (via „2D Pose Estimate“-Tool), wirst du zur Bestätigung aufgefordert:
+
+   ```bash
+   Initialpose gesetzt? (y/n):
+   ```
+4. Erst **nach Bestätigung mit `y`** wird die Wegpunktnavigation (`waypoint_nav_node`) gestartet.
+
+---
+
+### ℹ️ Hinweise zur Initialpose
+
+* Verwende in RViz das Tool **„2D Pose Estimate“**, um die Initialpose zu setzen.
+* Warte ein paar Sekunden, bis RViz komplett geladen ist und der Roboter angezeigt wird.
+* Ohne Initialpose kann die Navigation nicht korrekt starten.
+
+---
+
+Fertig!
+
