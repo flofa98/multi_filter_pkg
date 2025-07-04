@@ -427,6 +427,9 @@ bool WaypointNavNode::loadWaypointsFromYAML(const std::string& filepath) {
             pose.pose.position.y = wp["y"].as<double>();
             pose.pose.orientation.w = 1.0;
             waypoints_.push_back(pose);
+            RCLCPP_INFO(this->get_logger(), "Wegpunkt geladen: x=%.2f y=%.2f",
+             pose.pose.position.x, pose.pose.position.y);
+
         }
         return true;
     } catch (...) {
