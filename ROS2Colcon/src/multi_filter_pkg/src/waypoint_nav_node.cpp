@@ -52,7 +52,8 @@ private:
     void updateEKF(const Eigen::Vector3d& z);
     void updatePF(const Eigen::Vector3d& z);
 
-    rclcpp::Subscription<geometry_msgs::msg::PoseWithCovarianceStamped>::SharedPtr amcl_pose_sub_;
+    
+
 
     double simulateRaycast(const Eigen::Vector3d& state);
 
@@ -60,6 +61,18 @@ private:
     sensor_msgs::msg::LaserScan last_scan_;
     bool got_scan_ = false;
 
+    rclcpp::Subscription<sensor_msgs::msg::Imu>::SharedPtr imu_sub_;
+    rclcpp::Subscription<sensor_msgs::msg::JointState>::SharedPtr joint_sub_;
+
+    double wheel_radius_ = 0.033;       //TurtleBot3
+    double wheel_separation_ = 0.16;
+
+    double last_left_pos_ = 0.0;
+    double last_right_pos_ = 0.0;
+    rclcpp::Time last_joint_time_;
+    bool got_joint_state_ = false;
+
+    Eigen::Vector3d joint_odom_pose_ = Eigen::Vector3d::Zero();
 
 
     rclcpp_action::Client<NavigateToPose>::SharedPtr client_;
@@ -158,6 +171,86 @@ WaypointNavNode::WaypointNavNode() : Node("waypoint_nav_node"), current_goal_idx
     RCLCPP_WARN(this->get_logger(), "map → base_link nicht verfügbar nach 3 Sekunden");
 }
 
+    joint_sub_ = this->create_subscription<sensor_msgs::msg::JointState>(
+    "/joint_states", 10,
+    [this](const sensor_msgs::msg::JointState::SharedPtr msg) {
+        if (msg->name.size() < 2 || msg->position.size() < 2) return;
+
+        double left_pos = msg->position[0];  // Annahme: [left, right]
+        double right_pos = msg->position[1];
+
+        if (!got_joint_state_) {
+            last_left_pos_ = left_pos;
+            last_right_pos_ = right_pos;
+            last_joint_time_ = msg->header.stamp;
+            got_joint_state_ = true;
+            return;
+        }
+
+        double d_left = left_pos - last_left_pos_;
+        double d_right = right_pos - last_right_pos_;
+        double dt = (this->now() - last_joint_time_).seconds();
+
+        last_left_pos_ = left_pos;
+        last_right_pos_ = right_pos;
+        last_joint_time_ = this->now();
+
+        double d_left_m = d_left * wheel_radius_;
+        double d_right_m = d_right * wheel_radius_;
+
+        double d_center = (d_left_m + d_right_m) / 2.0;
+        double d_theta = (d_right_m - d_left_m) / wheel_separation_;
+
+        double theta = joint_odom_pose_(2);
+        double dx = d_center * cos(theta);
+        double dy = d_center * sin(theta);
+
+        joint_odom_pose_ += Eigen::Vector3d(dx, dy, d_theta);
+
+        // Winkel normalisieren
+        while (joint_odom_pose_(2) > M_PI) joint_odom_pose_(2) -= 2 * M_PI;
+        while (joint_odom_pose_(2) < -M_PI) joint_odom_pose_(2) += 2 * M_PI;
+
+        // Filter prädizieren mit aus JointStates berechnetem v, omega
+        double v = d_center / dt;
+        double omega = d_theta / dt;
+        predictPF(v, omega, dt);
+        predictKF(v, omega, dt);
+        predictEKF(v, omega, dt);
+
+        // Ausgabe
+        Eigen::Vector3d pf_est = Eigen::Vector3d::Zero();
+        for (const auto& p : particles_) pf_est += p.state;
+        pf_est /= N_;
+
+        publishPose(pf_est, path_pf_, path_pub_pf_, file_pf_, 200);
+        publishPose(kf_state_, path_kf_, path_pub_kf_, file_kf_, 100);
+        publishPose(ekf_state_, path_ekf_, path_pub_ekf_, file_ekf_, 150);
+
+        map_.header.stamp = this->now();
+        map_pub_->publish(map_);
+    });
+
+    imu_sub_ = this->create_subscription<sensor_msgs::msg::Imu>(
+    "/imu", 10,
+    [this](const sensor_msgs::msg::Imu::SharedPtr msg) {
+        tf2::Quaternion q(
+            msg->orientation.x,
+            msg->orientation.y,
+            msg->orientation.z,
+            msg->orientation.w);
+        double roll, pitch, yaw;
+        tf2::Matrix3x3(q).getRPY(roll, pitch, yaw);
+
+        Eigen::Vector3d z(0.0, 0.0, yaw);  // Nur yaw-Messung
+
+        // Update yaw in den Filtern
+        updatePFYaw(z(2));
+        updateKFYaw(z(2));
+        updateEKFYaw(z(2));
+
+        RCLCPP_DEBUG(this->get_logger(), "IMU yaw=%.2f", yaw);
+    });
 
 
     timer_ = this->create_wall_timer(1s, std::bind(&WaypointNavNode::sendNextGoal, this));
@@ -198,29 +291,6 @@ WaypointNavNode::WaypointNavNode() : Node("waypoint_nav_node"), current_goal_idx
     [this](const sensor_msgs::msg::LaserScan::SharedPtr msg) {
         this->last_scan_ = *msg;
         this->got_scan_ = true;
-    });
-    amcl_pose_sub_ = this->create_subscription<geometry_msgs::msg::PoseWithCovarianceStamped>(
-    "/amcl_pose", 10,
-    [this](const geometry_msgs::msg::PoseWithCovarianceStamped::SharedPtr msg) {
-        double x = msg->pose.pose.position.x;
-        double y = msg->pose.pose.position.y;
-
-        tf2::Quaternion q(
-            msg->pose.pose.orientation.x,
-            msg->pose.pose.orientation.y,
-            msg->pose.pose.orientation.z,
-            msg->pose.pose.orientation.w);
-        double roll, pitch, yaw;
-        tf2::Matrix3x3(q).getRPY(roll, pitch, yaw);
-
-        Eigen::Vector3d z(x, y, yaw);
-
-        // Update Filter mit AMCL-Messung (Pose x,y,yaw)
-        updatePF(z);
-        updateKF(z);
-        updateEKF(z);
-
-        RCLCPP_DEBUG(this->get_logger(), "AMCL Pose empfangen: x=%.2f, y=%.2f, yaw=%.2f", x, y, yaw);
     });
 
 
