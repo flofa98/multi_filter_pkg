@@ -28,6 +28,6 @@ fi
 # Node im neuen Terminal starten
 echo "✅ Initialpose bestätigt – starte waypoint_follower..."
 
-gnome-terminal -- bash -c "source '${SETUP_PATH}' && ros2 run multi_filter_pkg waypoint_follower; exec bash"
+gnome-terminal -- bash -c "source '${SETUP_PATH}' && ros2 run multi_filter_pkg waypoint_nav_node; exec bash"
 
 
