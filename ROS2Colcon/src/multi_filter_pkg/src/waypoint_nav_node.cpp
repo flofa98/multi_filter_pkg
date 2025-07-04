@@ -38,7 +38,6 @@ public:
 
 private:
     void sendNextGoal();
-    void cmdVelCallback(const geometry_msgs::msg::Twist::SharedPtr msg);
     bool loadWaypointsFromYAML(const std::string& filepath);
     void publishPose(const Eigen::Vector3d& state, nav_msgs::msg::Path& path,
                      rclcpp::Publisher<nav_msgs::msg::Path>::SharedPtr pub,
@@ -80,7 +79,6 @@ private:
     size_t current_goal_idx_;
     rclcpp::TimerBase::SharedPtr timer_;
 
-    rclcpp::Subscription<geometry_msgs::msg::Twist>::SharedPtr cmd_sub_;
     rclcpp::Publisher<nav_msgs::msg::Path>::SharedPtr path_pub_pf_, path_pub_kf_, path_pub_ekf_;
     rclcpp::Publisher<nav_msgs::msg::OccupancyGrid>::SharedPtr map_pub_;
 
@@ -342,37 +340,6 @@ void WaypointNavNode::sendNextGoal() {
     client_->async_send_goal(goal_msg, options);
 }
 
-void WaypointNavNode::cmdVelCallback(const geometry_msgs::msg::Twist::SharedPtr msg) {
-    if (got_cmd_) {
-        RCLCPP_INFO(this->get_logger(), "cmd_vel empfangen: linear=%.2f angular=%.2f", msg->linear.x, msg->angular.z);
-
-        double dt = (this->now() - last_cmd_time_).seconds();
-        double v = last_v_;
-        double omega = last_omega_;
-
-        predictPF(v, omega, dt);
-       
-        predictKF(v, omega, dt);
-        
-        predictEKF(v, omega, dt);
-     
-
-        Eigen::Vector3d pf_est = Eigen::Vector3d::Zero();
-        for (const auto& p : particles_) pf_est += p.state;
-        pf_est /= N_;
-
-        publishPose(pf_est, path_pf_, path_pub_pf_, file_pf_, 200);
-        publishPose(kf_state_, path_kf_, path_pub_kf_, file_kf_, 100);
-        publishPose(ekf_state_, path_ekf_, path_pub_ekf_, file_ekf_, 150);
-
-        map_.header.stamp = this->now();
-        map_pub_->publish(map_);
-    }
-    last_cmd_time_ = this->now();
-    last_v_ = msg->linear.x;
-    last_omega_ = msg->angular.z;
-    got_cmd_ = true;
-}
 
 bool WaypointNavNode::loadWaypointsFromYAML(const std::string& filepath) {
     try {
