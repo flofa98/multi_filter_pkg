@@ -356,20 +356,22 @@ void WaypointNavNode::publishPose(const Eigen::Vector3d& state,
     }
 }
 
-
 void WaypointNavNode::sendNextGoal() {
-    RCLCPP_INFO(this->get_logger(), "sendNextGoal aufgerufen");
+    RCLCPP_INFO(this->get_logger(), "sendNextGoal() aufgerufen.");
 
+    // Falls noch ein Ziel aktiv ist, nichts tun
     if (goal_active_) {
         RCLCPP_INFO(this->get_logger(), "Noch auf dem Weg zum Ziel, kein neues Ziel gesendet.");
         return;
     }
 
+    // Warte auf Action-Server
     if (!client_->wait_for_action_server(5s)) {
         RCLCPP_WARN(this->get_logger(), "Nav2-Action-Server nicht verfügbar.");
         return;
     }
 
+    // Alle Wegpunkte erreicht?
     if (current_goal_idx_ >= waypoints_.size()) {
         RCLCPP_INFO(this->get_logger(), "Alle Wegpunkte erreicht. Beende.");
         saveMapImage();
@@ -377,6 +379,7 @@ void WaypointNavNode::sendNextGoal() {
         return;
     }
 
+    // Zielnachricht vorbereiten
     auto goal_msg = NavigateToPose::Goal();
     goal_msg.pose = waypoints_[current_goal_idx_];
 
@@ -385,15 +388,17 @@ void WaypointNavNode::sendNextGoal() {
                 goal_msg.pose.pose.position.x,
                 goal_msg.pose.pose.position.y);
 
+    // Callbacks definieren
     rclcpp_action::Client<NavigateToPose>::SendGoalOptions options;
 
     options.goal_response_callback = [this](auto future) {
         auto goal_handle = future.get();
         if (!goal_handle) {
             RCLCPP_WARN(this->get_logger(), "Ziel %ld wurde abgelehnt.", current_goal_idx_);
-            goal_active_ = false;
+            goal_active_ = false;  // wichtig!
         } else {
             RCLCPP_INFO(this->get_logger(), "Ziel %ld wurde angenommen.", current_goal_idx_);
+            goal_active_ = true;  // wichtig!
         }
     };
 
@@ -406,13 +411,18 @@ void WaypointNavNode::sendNextGoal() {
 
     options.result_callback = [this](auto result) {
         goal_active_ = false;
+        if (result->result->error_code == 0) {
+            RCLCPP_INFO(this->get_logger(), "Ziel %ld erreicht.", current_goal_idx_);
+        } else {
+            RCLCPP_WARN(this->get_logger(), "Ziel %ld NICHT erfolgreich erreicht. Fehlercode: %d", current_goal_idx_, result->result->error_code);
+        }
         current_goal_idx_++;
-        RCLCPP_INFO(this->get_logger(), "Ziel erreicht. Starte nächstes.");
     };
 
-    goal_active_ = true;
+    // Ziel senden
     client_->async_send_goal(goal_msg, options);
 }
+
 
 
 
