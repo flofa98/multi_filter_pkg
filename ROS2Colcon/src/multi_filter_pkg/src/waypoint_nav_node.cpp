@@ -50,6 +50,9 @@ private:
     void updateKF(const Eigen::Vector3d& z);
     void updateEKF(const Eigen::Vector3d& z);
     void updatePF(const Eigen::Vector3d& z);
+    double imu_yaw_ = 0.0;
+    bool got_imu_ = false;
+
 
     
 
@@ -169,12 +172,12 @@ WaypointNavNode::WaypointNavNode() : Node("waypoint_nav_node"), current_goal_idx
     RCLCPP_WARN(this->get_logger(), "map → base_link nicht verfügbar nach 3 Sekunden");
 }
 
-    joint_sub_ = this->create_subscription<sensor_msgs::msg::JointState>(
+joint_sub_ = this->create_subscription<sensor_msgs::msg::JointState>(
     "/joint_states", 10,
     [this](const sensor_msgs::msg::JointState::SharedPtr msg) {
         if (msg->name.size() < 2 || msg->position.size() < 2) return;
 
-        double left_pos = msg->position[0];  // Annahme: [left, right]
+        double left_pos = msg->position[0];
         double right_pos = msg->position[1];
 
         if (!got_joint_state_) {
@@ -205,16 +208,27 @@ WaypointNavNode::WaypointNavNode() : Node("waypoint_nav_node"), current_goal_idx
 
         joint_odom_pose_ += Eigen::Vector3d(dx, dy, d_theta);
 
-        // Winkel normalisieren
+        // Normalisieren
         while (joint_odom_pose_(2) > M_PI) joint_odom_pose_(2) -= 2 * M_PI;
         while (joint_odom_pose_(2) < -M_PI) joint_odom_pose_(2) += 2 * M_PI;
 
-        // Filter prädizieren mit aus JointStates berechnetem v, omega
+        // Prädiktion
         double v = d_center / dt;
         double omega = d_theta / dt;
         predictPF(v, omega, dt);
         predictKF(v, omega, dt);
         predictEKF(v, omega, dt);
+
+        // Warten, bis IMU bereit ist
+        if (!got_imu_) return;
+
+        // x, y von Odometrie, yaw von IMU
+        Eigen::Vector3d fused_pose = joint_odom_pose_;
+        fused_pose(2) = imu_yaw_;
+
+        updatePF(fused_pose);
+        updateKF(fused_pose);
+        updateEKF(fused_pose);
 
         // Ausgabe
         Eigen::Vector3d pf_est = Eigen::Vector3d::Zero();
@@ -229,7 +243,8 @@ WaypointNavNode::WaypointNavNode() : Node("waypoint_nav_node"), current_goal_idx
         map_pub_->publish(map_);
     });
 
-    imu_sub_ = this->create_subscription<sensor_msgs::msg::Imu>(
+
+imu_sub_ = this->create_subscription<sensor_msgs::msg::Imu>(
     "/imu", 10,
     [this](const sensor_msgs::msg::Imu::SharedPtr msg) {
         tf2::Quaternion q(
@@ -240,15 +255,12 @@ WaypointNavNode::WaypointNavNode() : Node("waypoint_nav_node"), current_goal_idx
         double roll, pitch, yaw;
         tf2::Matrix3x3(q).getRPY(roll, pitch, yaw);
 
-        Eigen::Vector3d z(0.0, 0.0, yaw);  // Nur yaw-Messung
-
-        // Update yaw in den Filtern
-        updatePFYaw(z(2));
-        updateKFYaw(z(2));
-        updateEKFYaw(z(2));
+        imu_yaw_ = yaw;
+        got_imu_ = true;
 
         RCLCPP_DEBUG(this->get_logger(), "IMU yaw=%.2f", yaw);
     });
+
 
 
     timer_ = this->create_wall_timer(1s, std::bind(&WaypointNavNode::sendNextGoal, this));
