@@ -449,32 +449,63 @@ void WaypointNavNode::updateEKF(const Eigen::Vector3d& z) {
     ekf_state_ = ekf_state_ + K * y;
     ekf_P_ = (Eigen::Matrix3d::Identity() - K * H) * ekf_P_;
 }
-
 void WaypointNavNode::updatePF(const Eigen::Vector3d& z) {
+    double sigma_pos = 0.1;  // Positionstoleranz
+    double sigma_yaw = 0.2;  // Winkeltoleranz
+
     double sum_weights = 0.0;
+
+    // Gewichtung jedes Partikels
     for (auto& p : particles_) {
         Eigen::Vector3d diff = z - p.state;
-        // Winkeldifferenz normalisieren
+
+        // Yaw normalisieren
         while (diff(2) > M_PI) diff(2) -= 2 * M_PI;
         while (diff(2) < -M_PI) diff(2) += 2 * M_PI;
 
-        double error = diff.norm();
-        p.weight = std::exp(-0.5 * error * error / (0.1 * 0.1));
+        double dx = diff(0);
+        double dy = diff(1);
+        double dyaw = diff(2);
+
+        double error_xy = std::sqrt(dx * dx + dy * dy);
+        double error_yaw = dyaw;
+
+        double weight_xy = std::exp(-0.5 * error_xy * error_xy / (sigma_pos * sigma_pos));
+        double weight_yaw = std::exp(-0.5 * error_yaw * error_yaw / (sigma_yaw * sigma_yaw));
+
+        p.weight = weight_xy * weight_yaw;
         sum_weights += p.weight;
     }
-    for (auto& p : particles_) p.weight /= (sum_weights + 1e-6);
 
-    // Resampling
+    // Normalisierung
+    for (auto& p : particles_) {
+        p.weight /= (sum_weights + 1e-6);
+    }
+
+    // Resampling mit optionalem Roughening
     std::vector<double> weights;
     for (const auto& p : particles_) weights.push_back(p.weight);
 
     std::discrete_distribution<> dist(weights.begin(), weights.end());
+    std::normal_distribution<double> roughening(0.0, 0.01);
+
     std::vector<Particle> new_particles;
-    for (int i = 0; i < N_; ++i)
-        new_particles.push_back(particles_[dist(gen_)]);
+    for (int i = 0; i < N_; ++i) {
+        Particle sampled = particles_[dist(gen_)];
+        // Leichtes Roughening zur Degenerationsvermeidung
+        sampled.state += Eigen::Vector3d(
+            roughening(gen_),
+            roughening(gen_),
+            roughening(gen_) * 0.1);
+        // Yaw wieder normalisieren
+        while (sampled.state(2) > M_PI) sampled.state(2) -= 2 * M_PI;
+        while (sampled.state(2) < -M_PI) sampled.state(2) += 2 * M_PI;
+        new_particles.push_back(sampled);
+    }
 
     particles_ = new_particles;
 }
+
 
 
 
