@@ -533,31 +533,39 @@ void WaypointNavNode::updateEKF(const Eigen::Vector3d& z) {
     ekf_state_ = ekf_state_ + K * y;
     ekf_P_ = (Eigen::Matrix3d::Identity() - K * H) * ekf_P_;
 }
-void WaypointNavNode::updatePF(const Eigen::Vector3d& z) {
-    double sigma_pos = 0.1;  // Positionstoleranz
-    double sigma_yaw = 0.2;  // Winkeltoleranz
 
+void WaypointNavNode::updatePF(const Eigen::Vector3d& z) {
+    if (!got_scan_) return;
+
+    double sigma = 0.2;  // Standardabweichung des Messfehlers (m)
     double sum_weights = 0.0;
 
-    // Gewichtung jedes Partikels
+    int num_beams = 10;
+    int total_beams = static_cast<int>((last_scan_.angle_max - last_scan_.angle_min) / last_scan_.angle_increment);
+    int step = std::max(1, total_beams / num_beams);
+
     for (auto& p : particles_) {
-        Eigen::Vector3d diff = z - p.state;
+        double weight = 1.0;
 
-        // Yaw normalisieren
-        while (diff(2) > M_PI) diff(2) -= 2 * M_PI;
-        while (diff(2) < -M_PI) diff(2) += 2 * M_PI;
+        for (int i = 0; i < total_beams; i += step) {
+            double angle = last_scan_.angle_min + i * last_scan_.angle_increment;
+            double measured_range = last_scan_.ranges[i];
+            if (measured_range >= last_scan_.range_max || measured_range <= last_scan_.range_min) continue;
 
-        double dx = diff(0);
-        double dy = diff(1);
-        double dyaw = diff(2);
+            // Transformiere Strahlwinkel ins Weltkoordinatensystem
+            double global_angle = p.state(2) + angle;
 
-        double error_xy = std::sqrt(dx * dx + dy * dy);
-        double error_yaw = dyaw;
+            // Simuliere Messung aus Karte
+            Eigen::Vector3d ray_state = p.state;
+            ray_state(2) = global_angle;
+            double expected_range = simulateRaycast(ray_state);
 
-        double weight_xy = std::exp(-0.5 * error_xy * error_xy / (sigma_pos * sigma_pos));
-        double weight_yaw = std::exp(-0.5 * error_yaw * error_yaw / (sigma_yaw * sigma_yaw));
+            double diff = measured_range - expected_range;
+            double prob = std::exp(-0.5 * diff * diff / (sigma * sigma));
+            weight *= prob;
+        }
 
-        p.weight = weight_xy * weight_yaw;
+        p.weight = weight;
         sum_weights += p.weight;
     }
 
@@ -566,22 +574,19 @@ void WaypointNavNode::updatePF(const Eigen::Vector3d& z) {
         p.weight /= (sum_weights + 1e-6);
     }
 
-    // Resampling mit optionalem Roughening
+    // Resampling (wie gehabt)
     std::vector<double> weights;
     for (const auto& p : particles_) weights.push_back(p.weight);
-
     std::discrete_distribution<> dist(weights.begin(), weights.end());
     std::normal_distribution<double> roughening(0.0, 0.01);
 
     std::vector<Particle> new_particles;
     for (int i = 0; i < N_; ++i) {
         Particle sampled = particles_[dist(gen_)];
-        // Leichtes Roughening zur Degenerationsvermeidung
         sampled.state += Eigen::Vector3d(
             roughening(gen_),
             roughening(gen_),
             roughening(gen_) * 0.1);
-        // Yaw wieder normalisieren
         while (sampled.state(2) > M_PI) sampled.state(2) -= 2 * M_PI;
         while (sampled.state(2) < -M_PI) sampled.state(2) += 2 * M_PI;
         new_particles.push_back(sampled);
@@ -589,6 +594,7 @@ void WaypointNavNode::updatePF(const Eigen::Vector3d& z) {
 
     particles_ = new_particles;
 }
+
 
 
 
