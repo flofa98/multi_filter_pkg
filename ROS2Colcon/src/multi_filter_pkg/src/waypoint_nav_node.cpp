@@ -409,15 +409,16 @@ void WaypointNavNode::sendNextGoal() {
                     feedback->current_pose.pose.position.y);
     };
 
-    options.result_callback = [this](auto result) {
-        goal_active_ = false;
-        if (result->result->error_code == 0) {
-            RCLCPP_INFO(this->get_logger(), "Ziel %ld erreicht.", current_goal_idx_);
-        } else {
-            RCLCPP_WARN(this->get_logger(), "Ziel %ld NICHT erfolgreich erreicht. Fehlercode: %d", current_goal_idx_, result->result->error_code);
-        }
-        current_goal_idx_++;
-    };
+options.result_callback = [this](const auto& result) {
+    goal_active_ = false;
+    if (result.result->error_code == 0) {
+        RCLCPP_INFO(this->get_logger(), "Ziel %ld erreicht.", current_goal_idx_);
+    } else {
+        RCLCPP_WARN(this->get_logger(), "Ziel %ld NICHT erfolgreich erreicht. Fehlercode: %d", current_goal_idx_, result.result->error_code);
+    }
+    current_goal_idx_++;
+};
+
 
     // Ziel senden
     client_->async_send_goal(goal_msg, options);
