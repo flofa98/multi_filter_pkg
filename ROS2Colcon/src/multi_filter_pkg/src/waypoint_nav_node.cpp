@@ -62,7 +62,8 @@ private:
     
 
 
-    double simulateRaycast(const Eigen::Vector3d& state);
+    double simulateRaycast(const Eigen::Vector3d& state, double ray_angle);
+
 
     rclcpp::Subscription<sensor_msgs::msg::LaserScan>::SharedPtr scan_sub_;
     sensor_msgs::msg::LaserScan last_scan_;
@@ -556,9 +557,8 @@ void WaypointNavNode::updatePF(const Eigen::Vector3d& z) {
             double global_angle = p.state(2) + angle;
 
             // Simuliere Messung aus Karte
-            Eigen::Vector3d ray_state = p.state;
-            ray_state(2) = global_angle;
-            double expected_range = simulateRaycast(ray_state);
+          double expected_range = simulateRaycast(p.state, global_angle);
+
 
             double diff = measured_range - expected_range;
             double prob = std::exp(-0.5 * diff * diff / (sigma * sigma));
@@ -598,21 +598,14 @@ void WaypointNavNode::updatePF(const Eigen::Vector3d& z) {
 
 
 
-
-
-double WaypointNavNode::simulateRaycast(const Eigen::Vector3d& state) {
-    double x0 = (state(0) - map_.info.origin.position.x) / map_.info.resolution;
-    double y0 = (state(1) - map_.info.origin.position.y) / map_.info.resolution;
-    double theta = state(2);
-
-    cv::Point start(static_cast<int>(x0), static_cast<int>(y0));
+double WaypointNavNode::simulateRaycast(const Eigen::Vector3d& state, double ray_angle) {
     double range_max = 5.0;  // max LiDAR range
     double step = map_.info.resolution;
     double ray_length = 0.0;
 
     for (double r = 0.0; r < range_max; r += step) {
-        double x = state(0) + r * std::cos(theta);
-        double y = state(1) + r * std::sin(theta);
+        double x = state(0) + r * std::cos(ray_angle);
+        double y = state(1) + r * std::sin(ray_angle);
 
         int mx = static_cast<int>((x - map_.info.origin.position.x) / map_.info.resolution);
         int my = static_cast<int>((y - map_.info.origin.position.y) / map_.info.resolution);
@@ -628,6 +621,7 @@ double WaypointNavNode::simulateRaycast(const Eigen::Vector3d& state) {
 
     return ray_length;
 }
+
 
 
 void WaypointNavNode::saveMapImage() {
