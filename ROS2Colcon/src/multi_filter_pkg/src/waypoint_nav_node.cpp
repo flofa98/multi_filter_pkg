@@ -133,8 +133,6 @@ WaypointNavNode::WaypointNavNode() : Node("waypoint_nav_node"), current_goal_idx
         return;
     }
 
-    cmd_sub_ = this->create_subscription<geometry_msgs::msg::Twist>(
-        "/cmd_vel", 10, std::bind(&WaypointNavNode::cmdVelCallback, this, std::placeholders::_1));
 
     path_pub_pf_ = this->create_publisher<nav_msgs::msg::Path>("pf_path", 10);
     path_pub_kf_ = this->create_publisher<nav_msgs::msg::Path>("kf_path", 10);
