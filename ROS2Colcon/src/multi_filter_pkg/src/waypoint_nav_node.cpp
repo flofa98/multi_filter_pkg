@@ -538,7 +538,8 @@ void WaypointNavNode::updateEKF(const Eigen::Vector3d& z) {
 void WaypointNavNode::updatePF(const Eigen::Vector3d& z) {
     if (!got_scan_) return;
 
-    double sigma = 0.2;  // Standardabweichung des Messfehlers (m)
+    double sigma = 0.2;  // Messrauschen
+    double z_rand_weight = 0.2;  // Anteil zufälliger Messfehler
     double sum_weights = 0.0;
 
     int num_beams = 10;
@@ -553,15 +554,17 @@ void WaypointNavNode::updatePF(const Eigen::Vector3d& z) {
             double measured_range = last_scan_.ranges[i];
             if (measured_range >= last_scan_.range_max || measured_range <= last_scan_.range_min) continue;
 
-            // Transformiere Strahlwinkel ins Weltkoordinatensystem
             double global_angle = p.state(2) + angle;
-
-            // Simuliere Messung aus Karte
-          double expected_range = simulateRaycast(p.state, global_angle);
-
+            double expected_range = simulateRaycast(p.state, global_angle);
 
             double diff = measured_range - expected_range;
-            double prob = std::exp(-0.5 * diff * diff / (sigma * sigma));
+
+            // Wahrscheinlichkeiten
+            double z_hit = std::exp(-0.5 * diff * diff / (sigma * sigma)) / (sigma * std::sqrt(2 * M_PI));
+            double z_rand = 1.0 / last_scan_.range_max;
+
+            // Likelihood als Mischung
+            double prob = (1.0 - z_rand_weight) * z_hit + z_rand_weight * z_rand;
             weight *= prob;
         }
 
@@ -571,10 +574,10 @@ void WaypointNavNode::updatePF(const Eigen::Vector3d& z) {
 
     // Normalisierung
     for (auto& p : particles_) {
-        p.weight /= (sum_weights + 1e-6);
+        p.weight /= (sum_weights + 1e-9);
     }
 
-    // Resampling (wie gehabt)
+    // Resampling
     std::vector<double> weights;
     for (const auto& p : particles_) weights.push_back(p.weight);
     std::discrete_distribution<> dist(weights.begin(), weights.end());
@@ -598,29 +601,37 @@ void WaypointNavNode::updatePF(const Eigen::Vector3d& z) {
 
 
 
-double WaypointNavNode::simulateRaycast(const Eigen::Vector3d& state, double ray_angle) {
-    double range_max = 5.0;  // max LiDAR range
-    double step = map_.info.resolution;
-    double ray_length = 0.0;
 
-    for (double r = 0.0; r < range_max; r += step) {
-        double x = state(0) + r * std::cos(ray_angle);
-        double y = state(1) + r * std::sin(ray_angle);
+double WaypointNavNode::simulateRaycast(const Eigen::Vector3d& state, double ray_angle) {
+    double range_max = last_scan_.range_max;  // max Reichweite vom echten Sensor
+    double step = 0.01;  // feine Abtastung
+    double r = 0.0;
+
+    double cos_a = std::cos(ray_angle);
+    double sin_a = std::sin(ray_angle);
+
+    for (; r < range_max; r += step) {
+        double x = state(0) + r * cos_a;
+        double y = state(1) + r * sin_a;
 
         int mx = static_cast<int>((x - map_.info.origin.position.x) / map_.info.resolution);
         int my = static_cast<int>((y - map_.info.origin.position.y) / map_.info.resolution);
 
-        if (mx < 0 || my < 0 || mx >= static_cast<int>(map_.info.width) || my >= static_cast<int>(map_.info.height))
-            break;
+        if (mx < 0 || my < 0 || mx >= static_cast<int>(map_.info.width) || my >= static_cast<int>(map_.info.height)) {
+            return range_max;  // außerhalb: kein Treffer
+        }
 
-        int value = map_.data[my * map_.info.width + mx];
-        if (value > 50) break;  // Belegung erkannt
+        int idx = my * map_.info.width + mx;
+        int occ_val = map_.data[idx];
 
-        ray_length = r;
+        if (occ_val < 0) return range_max;  // unbekannter Bereich
+
+        if (occ_val >= 65) break;  // belegt (Threshold aus map.yaml)
     }
 
-    return ray_length;
+    return r;
 }
+
 
 
 
