@@ -399,14 +399,27 @@ bool WaypointNavNode::loadWaypointsFromYAML(const std::string& filepath) {
 }
 
 void WaypointNavNode::predictPF(double v, double omega, double dt) {
+    std::normal_distribution<double> noise_v(0.0, 0.02);     // lineares Rauschen
+    std::normal_distribution<double> noise_omega(0.0, 0.05); // Drehgeschwindigkeit
+
     for (auto& p : particles_) {
         double theta = p.state(2);
-        double dx = (v + motion_noise_(gen_)) * dt * cos(theta);
-        double dy = (v + motion_noise_(gen_)) * dt * sin(theta);
-        double dtheta = (omega + motion_noise_(gen_) * 0.1) * dt;
+
+        double noisy_v = v + noise_v(gen_);
+        double noisy_omega = omega + noise_omega(gen_);
+
+        double dx = noisy_v * dt * cos(theta);
+        double dy = noisy_v * dt * sin(theta);
+        double dtheta = noisy_omega * dt;
+
         p.state += Eigen::Vector3d(dx, dy, dtheta);
+
+        // Yaw normalisieren
+        while (p.state(2) > M_PI) p.state(2) -= 2 * M_PI;
+        while (p.state(2) < -M_PI) p.state(2) += 2 * M_PI;
     }
 }
+
 
 void WaypointNavNode::predictKF(double v, double omega, double dt) {
     double theta = kf_state_(2);
