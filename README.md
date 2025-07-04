@@ -58,6 +58,7 @@ Dieses Skript erledigt Folgendes:
 * Verwende in RViz das Tool **„2D Pose Estimate“**, um die Initialpose zu setzen.
 * Warte ein paar Sekunden, bis RViz komplett geladen ist und der Roboter angezeigt wird.
 * Ohne Initialpose kann die Navigation nicht korrekt starten.
+* Die Node braucht sehr lange bis sie sich initialisiert.
 
 ---
 
