@@ -29,7 +29,7 @@ source install/setup.bash
 ### 4. `launch.sh` ausführbar machen (nur einmal nötig, z. B. nach dem Clonen):
 
 ```bash
-chmod +x src/multi_filter_pkg/scripts/launch.sh
+chmod +x src/multi_filter_pkg/scripts/initialpose_prompt.sh
 ```
 
 ---
@@ -37,7 +37,9 @@ chmod +x src/multi_filter_pkg/scripts/launch.sh
 ### 5. Launch-Skript starten:
 
 ```bash
-./src/multi_filter_pkg/scripts/launch.sh
+cd ~/multi_filter_pkg/ROS2Colcon
+ros2 launch multi_filter_pkg launch.py
+
 ```
 
 Dieses Skript erledigt Folgendes:
